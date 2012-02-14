@@ -53,6 +53,7 @@ pref("services.sync.log.rootLogger", "Debug");
 pref("services.sync.log.logger.service.main", "Debug");
 pref("services.sync.log.logger.status", "Debug");
 pref("services.sync.log.logger.authenticator", "Debug");
+pref("services.sync.log.logger.auth.tokenserver", "Debug");
 pref("services.sync.log.logger.network.resources", "Debug");
 pref("services.sync.log.logger.service.jpakeclient", "Debug");
 pref("services.sync.log.logger.engine.bookmarks", "Debug");
