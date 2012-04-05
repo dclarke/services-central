@@ -1139,9 +1139,9 @@ private:
    * @param aItems the child frame construction items before pseudo creation
    * @param aParentFrame the parent frame we're creating pseudos for
    */
-  inline nsresult CreateNeededTablePseudos(nsFrameConstructorState& aState,
-                                           FrameConstructionItemList& aItems,
-                                           nsIFrame* aParentFrame);
+  inline void CreateNeededTablePseudos(nsFrameConstructorState& aState,
+                                       FrameConstructionItemList& aItems,
+                                       nsIFrame* aParentFrame);
 
   /**
    * Function to adjust aParentFrame to deal with captions.
@@ -1308,8 +1308,8 @@ private:
   nsresult FlushAccumulatedBlock(nsFrameConstructorState& aState,
                                  nsIContent* aContent,
                                  nsIFrame* aParentFrame,
-                                 nsFrameItems* aBlockItems,
-                                 nsFrameItems* aNewItems);
+                                 nsFrameItems& aBlockItems,
+                                 nsFrameItems& aNewItems);
 
   // Function to find FrameConstructionData for aContent.  Will return
   // null if aContent is not MathML.

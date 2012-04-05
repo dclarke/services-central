@@ -139,6 +139,7 @@ using mozilla::dom::gonk::SystemWorkerManager;
 #include "AudioManager.h"
 using mozilla::dom::gonk::AudioManager;
 #endif
+#include "nsDOMMutationObserver.h"
 
 // Editor stuff
 #include "nsEditorCID.h"
@@ -155,8 +156,10 @@ using mozilla::dom::gonk::AudioManager;
 #include "nsSystemPrincipal.h"
 #include "nsNullPrincipal.h"
 #include "nsNetCID.h"
+#ifndef MOZ_WIDGET_GONK
 #if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_PLATFORM_MAEMO)
 #include "nsHapticFeedback.h"
+#endif
 #endif
 #include "nsParserUtils.h"
 
@@ -240,14 +243,7 @@ static void Shutdown();
 #endif
 
 #include "nsGeolocation.h"
-#ifndef MOZ_WIDGET_GONK
-#if defined(XP_UNIX)    || \
-    defined(_WINDOWS)   || \
-    defined(machintosh) || \
-    defined(android)
-#include "nsDeviceMotionSystem.h"
-#endif
-#endif
+#include "nsDeviceSensors.h"
 #include "nsCSPService.h"
 #include "nsISmsService.h"
 #include "nsISmsDatabaseService.h"
@@ -292,16 +288,14 @@ NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(DOMRequestService,
 NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(SystemWorkerManager,
                                          SystemWorkerManager::FactoryCreate)
 #endif
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsDOMMutationObserver)
 
 #ifdef MOZ_WIDGET_GONK
 NS_GENERIC_FACTORY_CONSTRUCTOR(AudioManager)
-#else
-#if defined(XP_UNIX)    || \
-    defined(_WINDOWS)   || \
-    defined(machintosh) || \
-    defined(android)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsDeviceMotionSystem)
 #endif
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsDeviceSensors)
+
+#ifndef MOZ_WIDGET_GONK
 #if defined(ANDROID) || defined(MOZ_PLATFORM_MAEMO)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsHapticFeedback)
 #endif
@@ -790,14 +784,10 @@ NS_DEFINE_NAMED_CID(NS_NULLPRINCIPAL_CID);
 NS_DEFINE_NAMED_CID(NS_SECURITYNAMESET_CID);
 NS_DEFINE_NAMED_CID(THIRDPARTYUTIL_CID);
 NS_DEFINE_NAMED_CID(NS_STRUCTUREDCLONECONTAINER_CID);
+NS_DEFINE_NAMED_CID(NS_DOMMUTATIONOBSERVER_CID);
+NS_DEFINE_NAMED_CID(NS_DEVICE_SENSORS_CID);
 
 #ifndef MOZ_WIDGET_GONK
-#if defined(XP_UNIX)    || \
-    defined(_WINDOWS)   || \
-    defined(machintosh) || \
-    defined(android)
-NS_DEFINE_NAMED_CID(NS_DEVICE_MOTION_CID);
-#endif
 #if defined(ANDROID) || defined(MOZ_PLATFORM_MAEMO)
 NS_DEFINE_NAMED_CID(NS_HAPTICFEEDBACK_CID);
 #endif
@@ -1063,19 +1053,15 @@ static const mozilla::Module::CIDEntry kLayoutCIDs[] = {
   { &kNS_SYSTEMPRINCIPAL_CID, false, NULL, nsSystemPrincipalConstructor },
   { &kNS_NULLPRINCIPAL_CID, false, NULL, nsNullPrincipalConstructor },
   { &kNS_SECURITYNAMESET_CID, false, NULL, nsSecurityNameSetConstructor },
+  { &kNS_DEVICE_SENSORS_CID, false, NULL, nsDeviceSensorsConstructor },
 #ifndef MOZ_WIDGET_GONK
-#if defined(XP_UNIX)    || \
-    defined(_WINDOWS)   || \
-    defined(machintosh) || \
-    defined(android)
-  { &kNS_DEVICE_MOTION_CID, false, NULL, nsDeviceMotionSystemConstructor },
-#endif
 #if defined(ANDROID) || defined(MOZ_PLATFORM_MAEMO)
   { &kNS_HAPTICFEEDBACK_CID, false, NULL, nsHapticFeedbackConstructor },
 #endif
 #endif
   { &kTHIRDPARTYUTIL_CID, false, NULL, ThirdPartyUtilConstructor },
   { &kNS_STRUCTUREDCLONECONTAINER_CID, false, NULL, nsStructuredCloneContainerConstructor },
+  { &kNS_DOMMUTATIONOBSERVER_CID, false, NULL, nsDOMMutationObserverConstructor },
   { &kSMS_SERVICE_CID, false, NULL, nsISmsServiceConstructor },
   { &kSMS_DATABASE_SERVICE_CID, false, NULL, nsISmsDatabaseServiceConstructor },
   { &kSMS_REQUEST_MANAGER_CID, false, NULL, SmsRequestManagerConstructor },
@@ -1201,19 +1187,15 @@ static const mozilla::Module::ContractIDEntry kLayoutContracts[] = {
   { NS_SYSTEMPRINCIPAL_CONTRACTID, &kNS_SYSTEMPRINCIPAL_CID },
   { NS_NULLPRINCIPAL_CONTRACTID, &kNS_NULLPRINCIPAL_CID },
   { NS_SECURITYNAMESET_CONTRACTID, &kNS_SECURITYNAMESET_CID },
+  { NS_DEVICE_SENSORS_CONTRACTID, &kNS_DEVICE_SENSORS_CID },
 #ifndef MOZ_WIDGET_GONK
-#if defined(XP_UNIX)    || \
-    defined(_WINDOWS)   || \
-    defined(machintosh) || \
-    defined(android)
-  { NS_DEVICE_MOTION_CONTRACTID, &kNS_DEVICE_MOTION_CID },
-#endif
 #if defined(ANDROID) || defined(MOZ_PLATFORM_MAEMO)
   { "@mozilla.org/widget/hapticfeedback;1", &kNS_HAPTICFEEDBACK_CID },
 #endif
 #endif
   { THIRDPARTYUTIL_CONTRACTID, &kTHIRDPARTYUTIL_CID },
   { NS_STRUCTUREDCLONECONTAINER_CONTRACTID, &kNS_STRUCTUREDCLONECONTAINER_CID },
+  { NS_DOMMUTATIONOBSERVER_CONTRACTID, &kNS_DOMMUTATIONOBSERVER_CID },
   { SMS_SERVICE_CONTRACTID, &kSMS_SERVICE_CID },
   { SMS_DATABASE_SERVICE_CONTRACTID, &kSMS_DATABASE_SERVICE_CID },
   { SMS_REQUEST_MANAGER_CONTRACTID, &kSMS_REQUEST_MANAGER_CID },

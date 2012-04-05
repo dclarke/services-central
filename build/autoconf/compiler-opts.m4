@@ -96,7 +96,7 @@ AC_DEFUN([MOZ_C_SUPPORTS_WARNING],
             AC_LANG_SAVE
             AC_LANG_C
             _SAVE_CFLAGS="$CFLAGS"
-            CFLAGS="$CFLAGS -W$2"
+            CFLAGS="$CFLAGS -Werror -W$2"
             AC_TRY_COMPILE([],
                            [return(0);],
                            $3="yes",
@@ -116,7 +116,7 @@ AC_DEFUN([MOZ_CXX_SUPPORTS_WARNING],
             AC_LANG_SAVE
             AC_LANG_CPLUSPLUS
             _SAVE_CXXFLAGS="$CXXFLAGS"
-            CXXFLAGS="$CXXFLAGS -W$2"
+            CXXFLAGS="$CXXFLAGS -Werror -W$2"
             AC_TRY_COMPILE([],
                            [return(0);],
                            $3="yes",

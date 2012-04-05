@@ -117,6 +117,7 @@ AndroidBridge::Init(JNIEnv *jEnv,
     jAcknowledgeEventSync = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "acknowledgeEventSync", "()V");
 
     jEnableLocation = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "enableLocation", "(Z)V");
+    jEnableLocationHighAccuracy = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "enableLocationHighAccuracy", "(Z)V");
     jEnableSensor = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "enableSensor", "(I)V");
     jDisableSensor = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "disableSensor", "(I)V");
     jReturnIMEQueryResult = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "returnIMEQueryResult", "(Ljava/lang/String;II)V");
@@ -184,6 +185,8 @@ AndroidBridge::Init(JNIEnv *jEnv,
     jGetScreenOrientation = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "getScreenOrientation", "()S");
     jEnableScreenOrientationNotifications = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "enableScreenOrientationNotifications", "()V");
     jDisableScreenOrientationNotifications = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "disableScreenOrientationNotifications", "()V");
+    jLockScreenOrientation = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "lockScreenOrientation", "(I)V");
+    jUnlockScreenOrientation = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "unlockScreenOrientation", "()V");
 
     jEGLContextClass = (jclass) jEnv->NewGlobalRef(jEnv->FindClass("javax/microedition/khronos/egl/EGLContext"));
     jEGL10Class = (jclass) jEnv->NewGlobalRef(jEnv->FindClass("javax/microedition/khronos/egl/EGL10"));
@@ -319,28 +322,6 @@ AndroidBridge::AcknowledgeEventSync()
 }
 
 void
-AndroidBridge::EnableDeviceMotion(bool aEnable)
-{
-    ALOG_BRIDGE("AndroidBridge::EnableDeviceMotion");
-
-    // bug 734855 - we probably can make this finer grain based on
-    // the DOM APIs that are being invoked.
-    if (aEnable) {
-        EnableSensor(hal::SENSOR_ORIENTATION);
-        EnableSensor(hal::SENSOR_ACCELERATION);
-        EnableSensor(hal::SENSOR_LINEAR_ACCELERATION);
-        EnableSensor(hal::SENSOR_GYROSCOPE);
-    }
-    else {
-        DisableSensor(hal::SENSOR_ORIENTATION);
-        DisableSensor(hal::SENSOR_ACCELERATION);
-        DisableSensor(hal::SENSOR_LINEAR_ACCELERATION);
-        DisableSensor(hal::SENSOR_GYROSCOPE);
-    }
-}
-
-
-void
 AndroidBridge::EnableLocation(bool aEnable)
 {
     ALOG_BRIDGE("AndroidBridge::EnableLocation");
@@ -351,6 +332,18 @@ AndroidBridge::EnableLocation(bool aEnable)
 
     AutoLocalJNIFrame jniFrame(env, 1);
     env->CallStaticVoidMethod(mGeckoAppShellClass, jEnableLocation, aEnable);
+}
+
+void
+AndroidBridge::EnableLocationHighAccuracy(bool aEnable)
+{
+    ALOG_BRIDGE("AndroidBridge::EnableLocationHighAccuracy");
+    JNIEnv *env = GetJNIEnv();
+    if (!env)
+        return;
+
+    AutoLocalJNIFrame jniFrame(env, 1);
+    env->CallStaticVoidMethod(mGeckoAppShellClass, jEnableLocationHighAccuracy, aEnable);
 }
 
 void
@@ -1886,15 +1879,6 @@ AndroidBridge::IsTablet()
 }
 
 void
-AndroidBridge::SetCompositorParent(mozilla::layers::CompositorParent* aCompositorParent,
-                                   ::base::Thread* aCompositorThread)
-{
-#ifdef MOZ_JAVA_COMPOSITOR
-    nsWindow::SetCompositorParent(aCompositorParent, aCompositorThread);
-#endif
-}
-
-void
 AndroidBridge::SetFirstPaintViewport(float aOffsetX, float aOffsetY, float aZoom, float aPageWidth, float aPageHeight)
 {
     AndroidGeckoLayerClient *client = mLayerClient;
@@ -2114,6 +2098,19 @@ AndroidBridge::DisableScreenOrientationNotifications()
     mJNIEnv->CallStaticVoidMethod(mGeckoAppShellClass, jDisableScreenOrientationNotifications);
 }
 
+void
+AndroidBridge::LockScreenOrientation(const dom::ScreenOrientationWrapper& aOrientation)
+{
+  ALOG_BRIDGE("AndroidBridge::LockScreenOrientation");
+  mJNIEnv->CallStaticVoidMethod(mGeckoAppShellClass, jLockScreenOrientation, aOrientation.orientation);
+}
+
+void
+AndroidBridge::UnlockScreenOrientation()
+{
+  ALOG_BRIDGE("AndroidBridge::UnlockScreenOrientation");
+  mJNIEnv->CallStaticVoidMethod(mGeckoAppShellClass, jUnlockScreenOrientation);
+}
 
 /* attribute nsIAndroidBrowserApp browserApp; */
 NS_IMETHODIMP nsAndroidBridge::GetBrowserApp(nsIAndroidBrowserApp * *aBrowserApp)

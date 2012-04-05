@@ -53,7 +53,6 @@
 #include "nsHtml5DocumentMode.h"
 #include "nsIScriptElement.h"
 #include "nsIParser.h"
-#include "nsCOMArray.h"
 #include "nsAHtml5TreeOpSink.h"
 #include "nsHtml5TreeOpStage.h"
 #include "nsIURI.h"
@@ -86,6 +85,7 @@ class nsHtml5TreeOpExecutor : public nsContentSink,
     NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsHtml5TreeOpExecutor, nsContentSink)
 
   private:
+    static bool        sExternalViewSource;
 #ifdef DEBUG_NS_HTML5_TREE_OP_EXECUTOR_FLUSH
     static PRUint32    sAppendBatchMaxSize;
     static PRUint32    sAppendBatchSlotsExamined;
@@ -104,7 +104,7 @@ class nsHtml5TreeOpExecutor : public nsContentSink,
     nsTArray<nsIContentPtr>              mElementsSeenInThisAppendBatch;
     nsTArray<nsHtml5PendingNotification> mPendingNotifications;
     nsHtml5StreamParser*                 mStreamParser;
-    nsCOMArray<nsIContent>               mOwnedElements;
+    nsTArray<nsCOMPtr<nsIContent> >      mOwnedElements;
     
     /**
      * URLs already preloaded/preloading.
@@ -140,6 +140,12 @@ class nsHtml5TreeOpExecutor : public nsContentSink,
      * initializing this.
      */
     nsresult                      mBroken;
+
+    /**
+     * Whether this executor has already complained about matters related
+     * to character encoding declarations.
+     */
+    bool                          mAlreadyComplainedAboutCharset;
 
   public:
   
@@ -368,8 +374,16 @@ class nsHtml5TreeOpExecutor : public nsContentSink,
 
     void Start();
 
-    void NeedsCharsetSwitchTo(const char* aEncoding, PRInt32 aSource);
-    
+    void NeedsCharsetSwitchTo(const char* aEncoding,
+                              PRInt32 aSource,
+                              PRUint32 aLineNumber);
+
+    void MaybeComplainAboutCharset(const char* aMsgId,
+                                   bool aError,
+                                   PRUint32 aLineNumber);
+
+    void ComplainAboutBogusProtocolCharset(nsIDocument* aDoc);
+
     bool IsComplete() {
       return !mParser;
     }
@@ -393,7 +407,7 @@ class nsHtml5TreeOpExecutor : public nsContentSink,
     void Reset();
     
     inline void HoldElement(nsIContent* aContent) {
-      mOwnedElements.AppendObject(aContent);
+      mOwnedElements.AppendElement(aContent);
     }
 
     void DropHeldElements();
@@ -433,8 +447,12 @@ class nsHtml5TreeOpExecutor : public nsContentSink,
 
     void SetSpeculationBase(const nsAString& aURL);
 
+    static void InitializeStatics();
+
   private:
     nsHtml5Parser* GetParser();
+
+    bool IsExternalViewSource();
 
     /**
      * Get a nsIURI for an nsString if the URL hasn't been preloaded yet.

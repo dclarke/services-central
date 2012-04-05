@@ -66,8 +66,6 @@
 #include "nsIURI.h"
 #include "nsIPermissionManager.h"
 #include "nsIObserverService.h"
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
 #include "nsIJSContextStack.h"
 #include "nsThreadUtils.h"
 #include "mozilla/Services.h"
@@ -229,7 +227,8 @@ nsDOMGeoPositionError::NotifyCallback(nsIDOMGeoPositionErrorCallback* aCallback)
   nsCOMPtr<nsIJSContextStack> stack(do_GetService("@mozilla.org/js/xpc/ContextStack;1"));
   if (!stack || NS_FAILED(stack->Push(nsnull)))
     return;
-  
+
+  nsAutoMicroTask mt;
   aCallback->HandleEvent(this);
   
   // remove the stack
@@ -385,6 +384,11 @@ nsGeolocationRequest::Allow()
       if (tempAge >= 0)
         maximumAge = tempAge;
     }
+    bool highAccuracy;
+    rv = mOptions->GetEnableHighAccuracy(&highAccuracy);
+    if (NS_SUCCEEDED(rv) && highAccuracy) {
+	geoService->SetHigherAccuracy(true);
+    }
   }
 
   if (lastPosition && maximumAge > 0 &&
@@ -454,7 +458,8 @@ nsGeolocationRequest::SendLocation(nsIDOMGeoPosition* aPosition)
   nsCOMPtr<nsIJSContextStack> stack(do_GetService("@mozilla.org/js/xpc/ContextStack;1"));
   if (!stack || NS_FAILED(stack->Push(nsnull)))
     return; // silently fail
-  
+
+  nsAutoMicroTask mt;
   mCallback->HandleEvent(aPosition);
 
   // remove the stack
@@ -480,6 +485,16 @@ nsGeolocationRequest::Update(nsIDOMGeoPosition* aPosition)
 void
 nsGeolocationRequest::Shutdown()
 {
+  if (mOptions) {
+      bool highAccuracy;
+      nsresult rv = mOptions->GetEnableHighAccuracy(&highAccuracy);
+      if (NS_SUCCEEDED(rv) && highAccuracy) {
+	  nsRefPtr<nsGeolocationService> geoService = nsGeolocationService::GetInstance();
+	  if (geoService)
+	      geoService->SetHigherAccuracy(false);
+      }
+  }
+
   if (mTimeoutTimer) {
     mTimeoutTimer->Cancel();
     mTimeoutTimer = nsnull;
@@ -700,6 +715,24 @@ nsGeolocationService::SetDisconnectTimer()
   mDisconnectTimer->Init(this,
                          sProviderTimeout,
                          nsITimer::TYPE_ONE_SHOT);
+}
+
+void
+nsGeolocationService::SetHigherAccuracy(bool aEnable)
+{
+    if (!mHigherAccuracy && aEnable) {
+	  for (PRInt32 i = 0; i < mProviders.Count(); i++) {
+	    mProviders[i]->SetHighAccuracy(true);
+	  }
+    }
+	
+    if (mHigherAccuracy && !aEnable) {
+	  for (PRInt32 i = 0; i < mProviders.Count(); i++) {
+	    mProviders[i]->SetHighAccuracy(false);
+	  }
+    }
+
+    mHigherAccuracy = aEnable;
 }
 
 void 

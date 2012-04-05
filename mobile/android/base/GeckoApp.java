@@ -47,7 +47,6 @@ import org.mozilla.gecko.gfx.IntSize;
 import org.mozilla.gecko.gfx.Layer;
 import org.mozilla.gecko.gfx.LayerController;
 import org.mozilla.gecko.gfx.LayerView;
-import org.mozilla.gecko.gfx.PlaceholderLayerClient;
 import org.mozilla.gecko.gfx.RectUtils;
 import org.mozilla.gecko.gfx.SurfaceTextureLayer;
 import org.mozilla.gecko.gfx.ViewportMetrics;
@@ -94,8 +93,9 @@ import android.content.pm.PackageManager.*;
 import dalvik.system.*;
 
 abstract public class GeckoApp
-    extends Activity implements GeckoEventListener, SensorEventListener, LocationListener
-{
+                extends GeckoActivity 
+                implements GeckoEventListener, SensorEventListener, LocationListener,
+                           GeckoApplication.ApplicationLifecycleCallbacks {
     private static final String LOGTAG = "GeckoApp";
 
     public static enum StartupMode {
@@ -112,10 +112,7 @@ abstract public class GeckoApp
     public static final String ACTION_LOAD          = "org.mozilla.gecko.LOAD";
     public static final String ACTION_UPDATE        = "org.mozilla.gecko.UPDATE";
     public static final String ACTION_INIT_PW       = "org.mozilla.gecko.INIT_PW";
-    public static final String SAVED_STATE_URI      = "uri";
     public static final String SAVED_STATE_TITLE    = "title";
-    public static final String SAVED_STATE_VIEWPORT = "viewport";
-    public static final String SAVED_STATE_SCREEN   = "screen";
     public static final String SAVED_STATE_SESSION  = "session";
 
     StartupMode mStartupMode = null;
@@ -131,9 +128,7 @@ abstract public class GeckoApp
     public static boolean sIsGeckoReady = false;
     public static int mOrientation;
 
-    private IntentFilter mConnectivityFilter;
-
-    private BroadcastReceiver mConnectivityReceiver;
+    private GeckoConnectivityReceiver mConnectivityReceiver;
     private BroadcastReceiver mBatteryReceiver;
 
     public static BrowserToolbar mBrowserToolbar;
@@ -142,16 +137,11 @@ abstract public class GeckoApp
     public Favicons mFavicons;
 
     private static LayerController mLayerController;
-    private static PlaceholderLayerClient mPlaceholderLayerClient;
     private static GeckoLayerClient mLayerClient;
     private AboutHomeContent mAboutHomeContent;
     private static AbsoluteLayout mPluginContainer;
 
     public String mLastTitle;
-    public String mLastSnapshotUri;
-    public String mLastViewport;
-    public byte[] mLastScreen;
-    public int mOwnActivityDepth = 0;
     private boolean mRestoreSession = false;
     private boolean mInitialized = false;
 
@@ -453,10 +443,10 @@ abstract public class GeckoApp
 
         forward.setEnabled(tab.canDoForward());
 
-        // Disable share menuitem for about:, chrome: and file: URIs
+        // Disable share menuitem for about:, chrome:, file:, and resource: URIs
         String scheme = Uri.parse(tab.getURL()).getScheme();
         share.setEnabled(!(scheme.equals("about") || scheme.equals("chrome") ||
-                           scheme.equals("file")));
+                           scheme.equals("file") || scheme.equals("resource")));
 
         // Disable save as PDF for about:home and xul pages
         saveAsPDF.setEnabled(!(tab.getURL().equals("about:home") ||
@@ -540,60 +530,15 @@ abstract public class GeckoApp
 
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
-        if (mOwnActivityDepth > 0)
-            return; // we're showing one of our own activities and likely won't get paged out
 
         if (outState == null)
             outState = new Bundle();
 
-        new SessionSnapshotRunnable(null).run();
-
         outState.putString(SAVED_STATE_TITLE, mLastTitle);
-        outState.putString(SAVED_STATE_VIEWPORT, mLastViewport);
-        outState.putByteArray(SAVED_STATE_SCREEN, mLastScreen);
         outState.putBoolean(SAVED_STATE_SESSION, true);
     }
 
-    public class SessionSnapshotRunnable implements Runnable {
-        Tab mThumbnailTab;
-        SessionSnapshotRunnable(Tab thumbnailTab) {
-            mThumbnailTab = thumbnailTab;
-        }
-
-        public void run() {
-            if (mLayerClient == null)
-                return;
-
-            synchronized (mLayerClient) {
-                if (!Tabs.getInstance().isSelectedTab(mThumbnailTab))
-                    return;
-
-                HistoryEntry lastHistoryEntry = mThumbnailTab.getLastHistoryEntry();
-                if (lastHistoryEntry == null)
-                    return;
-
-                ViewportMetrics viewportMetrics = mLayerClient.getGeckoViewportMetrics();
-                // If we don't have viewport metrics, the screenshot won't be right so bail
-                if (viewportMetrics == null)
-                    return;
-                
-                String viewportJSON = viewportMetrics.toJSON();
-                // If the title, uri and viewport haven't changed, the old screenshot is probably valid
-                // Ordering of .equals() below is important since mLast* variables may be null
-                if (viewportJSON.equals(mLastViewport) &&
-                    lastHistoryEntry.mTitle.equals(mLastTitle) &&
-                    lastHistoryEntry.mUri.equals(mLastSnapshotUri))
-                    return; 
-
-                mLastViewport = viewportJSON;
-                mLastTitle = lastHistoryEntry.mTitle;
-                mLastSnapshotUri = lastHistoryEntry.mUri;
-                getAndProcessThumbnailForTab(mThumbnailTab, true);
-            }
-        }
-    }
-
-    void getAndProcessThumbnailForTab(final Tab tab, boolean forceBigSceenshot) {
+    void getAndProcessThumbnailForTab(final Tab tab) {
         boolean isSelectedTab = Tabs.getInstance().isSelectedTab(tab);
         final Bitmap bitmap = isSelectedTab ? mLayerClient.getBitmap() : null;
         
@@ -609,12 +554,10 @@ abstract public class GeckoApp
                 return;
             }
 
-            mLastScreen = null;
-            View view = mLayerController.getView();
-            int sw = forceBigSceenshot ? view.getWidth() : tab.getMinScreenshotWidth();
-            int sh = forceBigSceenshot ? view.getHeight(): tab.getMinScreenshotHeight();
-            int dw = forceBigSceenshot ? sw : tab.getThumbnailWidth();
-            int dh = forceBigSceenshot ? sh : tab.getThumbnailHeight();
+            int sw = tab.getMinScreenshotWidth();
+            int sh = tab.getMinScreenshotHeight();
+            int dw = tab.getThumbnailWidth();
+            int dh = tab.getThumbnailHeight();
             GeckoAppShell.sendEventToGecko(GeckoEvent.createScreenshotEvent(tab.getId(), sw, sh, dw, dh));
         }
     }
@@ -626,7 +569,6 @@ abstract public class GeckoApp
                 bitmap.compress(Bitmap.CompressFormat.PNG, 0, bos);
                 compressed = bos.toByteArray();
             }
-            mLastScreen = compressed;
         }
 
         if ("about:home".equals(thumbnailTab.getURL())) {
@@ -1254,11 +1196,11 @@ abstract public class GeckoApp
                 Tabs.getInstance().notifyListeners(tab, Tabs.TabEvents.STOP);
             }
         });
-
-        if (Tabs.getInstance().isSelectedTab(tab)) {
-            Runnable r = new SessionSnapshotRunnable(tab);
-            GeckoAppShell.getHandler().postDelayed(r, 500);
-        }
+        GeckoAppShell.getHandler().postDelayed(new Runnable() {
+            public void run() {
+                getAndProcessThumbnailForTab(tab);
+            }
+        }, 500);
     }
 
     void handleShowToast(final String message, final String duration) {
@@ -1570,7 +1512,8 @@ abstract public class GeckoApp
                 view.setVisibility(View.VISIBLE);
             }
 
-            mPluginContainer.updateViewLayout(view, lp);
+            if (mPluginContainer.indexOfChild(view) >= 0)
+                mPluginContainer.updateViewLayout(view, lp);
         }
     }
 
@@ -1618,10 +1561,10 @@ abstract public class GeckoApp
         Log.w(LOGTAG, "zerdatime " + SystemClock.uptimeMillis() + " - onCreate");
         if (savedInstanceState != null) {
             mLastTitle = savedInstanceState.getString(SAVED_STATE_TITLE);
-            mLastViewport = savedInstanceState.getString(SAVED_STATE_VIEWPORT);
-            mLastScreen = savedInstanceState.getByteArray(SAVED_STATE_SCREEN);
             mRestoreSession = savedInstanceState.getBoolean(SAVED_STATE_SESSION);
         }
+
+        LayoutInflater.from(this).setFactory(GeckoViewsFactory.getInstance());
 
         super.onCreate(savedInstanceState);
 
@@ -1643,9 +1586,9 @@ abstract public class GeckoApp
         mGeckoLayout = (RelativeLayout) findViewById(R.id.gecko_layout);
         mMainLayout = (LinearLayout) findViewById(R.id.main_layout);
 
-        mConnectivityFilter = new IntentFilter();
-        mConnectivityFilter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
         mConnectivityReceiver = new GeckoConnectivityReceiver();
+
+        ((GeckoApplication) getApplication()).addApplicationLifecycleCallbacks(this);
     }
 
     private void initialize() {
@@ -1660,8 +1603,6 @@ abstract public class GeckoApp
             if (m.find()) {
                 mProfile = GeckoProfile.get(this, m.group(1));
                 mLastTitle = null;
-                mLastViewport = null;
-                mLastScreen = null;
             }
         }
 
@@ -1743,9 +1684,12 @@ abstract public class GeckoApp
              * run experience, perhaps?
              */
             mLayerController = new LayerController(this);
-            mPlaceholderLayerClient = new PlaceholderLayerClient(mLayerController, mLastViewport);
+            View v = mLayerController.getView();
 
-            mGeckoLayout.addView(mLayerController.getView(), 0);
+            // Instead of flickering the checkerboard, show a white screen until Gecko paints
+            v.setBackgroundColor(Color.WHITE);
+
+            mGeckoLayout.addView(v, 0);
         }
 
         mPluginContainer = (AbsoluteLayout) findViewById(R.id.plugin_container);
@@ -2032,10 +1976,6 @@ abstract public class GeckoApp
     {
         Log.i(LOGTAG, "pause");
 
-        Runnable r = new SessionSnapshotRunnable(null);
-        GeckoAppShell.getHandler().post(r);
-
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createPauseEvent(mOwnActivityDepth));
         // The user is navigating away from this activity, but nothing
         // has come to the foreground yet; for Gecko, we may want to
         // stop repainting, for example.
@@ -2046,7 +1986,7 @@ abstract public class GeckoApp
         // onPause will be followed by either onResume or onStop.
         super.onPause();
 
-        unregisterReceiver(mConnectivityReceiver);
+        mConnectivityReceiver.unregisterFor(mAppContext);
         GeckoNetworkManager.getInstance().stop();
         GeckoScreenOrientationListener.getInstance().stop();
     }
@@ -2055,8 +1995,6 @@ abstract public class GeckoApp
     public void onResume()
     {
         Log.i(LOGTAG, "resume");
-        if (checkLaunchState(LaunchState.GeckoRunning))
-            GeckoAppShell.sendEventToGecko(GeckoEvent.createResumeEvent(mOwnActivityDepth));
 
         // After an onPause, the activity is back in the foreground.
         // Undo whatever we did in onPause.
@@ -2081,15 +2019,12 @@ abstract public class GeckoApp
         }
 
         mMainHandler.post(new Runnable() {
-          public void run() {
-            registerReceiver(mConnectivityReceiver, mConnectivityFilter);
-            GeckoNetworkManager.getInstance().start();
-            GeckoScreenOrientationListener.getInstance().start();
-          }
+            public void run() {
+                mConnectivityReceiver.registerFor(mAppContext);
+                GeckoNetworkManager.getInstance().start();
+                GeckoScreenOrientationListener.getInstance().start();
+            }
         });
-
-        if (mOwnActivityDepth > 0)
-            mOwnActivityDepth--;
     }
 
     @Override
@@ -2107,7 +2042,7 @@ abstract public class GeckoApp
         // etc., and generally mark the profile as 'clean', and then
         // dirty it again if we get an onResume.
 
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createStoppingEvent(mOwnActivityDepth));
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createStoppingEvent(isApplicationInBackground()));
         super.onStop();
     }
 
@@ -2124,7 +2059,7 @@ abstract public class GeckoApp
         Log.w(LOGTAG, "zerdatime " + SystemClock.uptimeMillis() + " - onStart");
 
         Log.i(LOGTAG, "start");
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createStartEvent(mOwnActivityDepth));
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createStartEvent(isApplicationInBackground()));
         super.onStart();
     }
 
@@ -2172,9 +2107,6 @@ abstract public class GeckoApp
                 SmsManager.getInstance().shutdown();
         }
 
-        GeckoNetworkManager.getInstance().stop();
-        GeckoScreenOrientationListener.getInstance().stop();
-
         super.onDestroy();
 
         unregisterReceiver(mBatteryReceiver);
@@ -2182,6 +2114,8 @@ abstract public class GeckoApp
         if (mAboutHomeContent != null) {
             mAboutHomeContent.onDestroy();
         }
+
+        ((GeckoApplication) getApplication()).removeApplicationLifecycleCallbacks(this);
     }
 
     @Override
@@ -2213,6 +2147,19 @@ abstract public class GeckoApp
         if (checkLaunchState(LaunchState.GeckoRunning))
             GeckoAppShell.onLowMemory();
         super.onLowMemory();
+    }
+
+    @Override
+    public void onApplicationPause() {
+        Log.i(LOGTAG, "application paused");
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createPauseEvent(true));
+    }
+
+    @Override
+    public void onApplicationResume() {
+        Log.i(LOGTAG, "application resumed");
+        if (checkLaunchState(LaunchState.GeckoRunning))
+            GeckoAppShell.sendEventToGecko(GeckoEvent.createResumeEvent(true));
     }
 
     abstract public String getPackageName();
@@ -2551,7 +2498,6 @@ abstract public class GeckoApp
                 }
             }
         }
-        mOwnActivityDepth++;
         startActivityForResult(intent, AWESOMEBAR_REQUEST);
         return true;
     }
@@ -2785,19 +2731,15 @@ abstract public class GeckoApp
         GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Tab:Add", args.toString()));
     }
 
+    /* This method is referenced by Robocop via reflection. */
     public GeckoLayerClient getLayerClient() { return mLayerClient; }
     public LayerController getLayerController() { return mLayerController; }
 
     // accelerometer
-    public void onAccuracyChanged(Sensor sensor, int accuracy)
-    {
-        Log.w(LOGTAG, "onAccuracyChanged "+accuracy);
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createSensorAccuracyEvent(accuracy));
-    }
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {}
 
     public void onSensorChanged(SensorEvent event)
     {
-        Log.w(LOGTAG, "onSensorChanged "+event);
         GeckoAppShell.sendEventToGecko(GeckoEvent.createSensorEvent(event));
     }
 
@@ -2805,7 +2747,6 @@ abstract public class GeckoApp
     public void onLocationChanged(Location location)
     {
         Log.w(LOGTAG, "onLocationChanged "+location);
-
         GeckoAppShell.sendEventToGecko(GeckoEvent.createLocationEvent(location));
     }
 
@@ -2823,9 +2764,6 @@ abstract public class GeckoApp
 
 
     private void connectGeckoLayerClient() {
-        if (mPlaceholderLayerClient != null)
-            mPlaceholderLayerClient.destroy();
-
         LayerController layerController = getLayerController();
         layerController.setLayerClient(mLayerClient);
     }

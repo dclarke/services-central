@@ -53,7 +53,6 @@
 #include "jsatom.h"
 #include "jsfriendapi.h"
 #include "jsgc.h"
-#include "jsxdrapi.h"
 #include "dom_quickstubs.h"
 #include "nsNullPrincipal.h"
 #include "nsIURI.h"
@@ -71,7 +70,12 @@
 #include "XPCQuickStubs.h"
 #include "dombindings.h"
 
+#include "mozilla/dom/bindings/Utils.h"
+
 #include "nsWrapperCacheInlines.h"
+#include "nsDOMMutationObserver.h"
+
+using namespace mozilla::dom;
 
 NS_IMPL_THREADSAFE_ISUPPORTS7(nsXPConnect,
                               nsIXPConnect,
@@ -861,11 +865,12 @@ xpc_MarkInCCGeneration(nsISupports* aVariant, PRUint32 aGeneration)
 }
 
 void
-xpc_UnmarkGrayObject(nsIXPConnectWrappedJS* aWrappedJS)
+xpc_TryUnmarkWrappedGrayObject(nsISupports* aWrappedJS)
 {
-    if (aWrappedJS) {
+    nsCOMPtr<nsIXPConnectWrappedJS> wjs = do_QueryInterface(aWrappedJS);
+    if (wjs) {
         // Unmarks gray JSObject.
-        static_cast<nsXPCWrappedJS*>(aWrappedJS)->GetJSObject();
+        static_cast<nsXPCWrappedJS*>(wjs.get())->GetJSObject();
     }
 }
 
@@ -1015,10 +1020,15 @@ nsXPConnect::Traverse(void *p, nsCycleCollectionTraversalCallback &cb)
              clazz->flags & JSCLASS_PRIVATE_IS_NSISUPPORTS) {
         NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "xpc_GetJSPrivate(obj)");
         cb.NoteXPCOMChild(static_cast<nsISupports*>(xpc_GetJSPrivate(obj)));
-    } else if (mozilla::dom::binding::instanceIsProxy(obj)) {
+    } else if (binding::instanceIsProxy(obj)) {
         NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "js::GetProxyPrivate(obj)");
         nsISupports *identity =
             static_cast<nsISupports*>(js::GetProxyPrivate(obj).toPrivate());
+        cb.NoteXPCOMChild(identity);
+    } else if ((clazz->flags & JSCLASS_IS_DOMJSCLASS) &&
+               bindings::DOMJSClass::FromJSClass(clazz)->mDOMObjectIsISupports) {
+        NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "UnwrapDOMObject(obj)");
+        nsISupports *identity = bindings::UnwrapDOMObject<nsISupports>(obj, clazz);
         cb.NoteXPCOMChild(identity);
     }
 
@@ -1237,6 +1247,10 @@ xpc_CreateGlobalObject(JSContext *cx, JSClass *clasp,
     }
 #endif
 
+    if (clasp->flags & JSCLASS_DOM_GLOBAL) {
+        mozilla::dom::bindings::AllocateProtoOrIfaceCache(*global);
+    }
+
     return NS_OK;
 }
 
@@ -1291,7 +1305,12 @@ nsXPConnect::InitClassesWithNewWrappedGlobal(JSContext * aJSContext,
         }
     }
 
-    *_retval = wrappedGlobal.forget().get();
+    // Stuff coming through this path always ends up as a DOM global.
+    // XXX Someone who knows why we can assert this should re-check
+    //     (after bug 720580).
+    MOZ_ASSERT(js::GetObjectClass(global)->flags & JSCLASS_DOM_GLOBAL);
+
+    wrappedGlobal.forget(_retval);
     return NS_OK;
 }
 
@@ -2317,6 +2336,7 @@ nsXPConnect::AfterProcessNextEvent(nsIThreadInternal *aThread,
     // Call cycle collector occasionally.
     MOZ_ASSERT(NS_IsMainThread());
     nsJSContext::MaybePokeCC();
+    nsDOMMutationObserver::HandleMutations();
 
     return Pop(nsnull);
 }
@@ -2839,34 +2859,23 @@ WriteScriptOrFunction(nsIObjectOutputStream *stream, JSContext *cx,
             return rv;
     }
 
-    JSXDRState *xdr = JS_XDRNewMem(cx, JSXDR_ENCODE);
-    if (!xdr)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    JSBool ok;
+    uint32_t size;
+    void* data;
     {
         JSAutoRequest ar(cx);
         if (functionObj)
-            ok = JS_XDRFunctionObject(xdr, &functionObj);
+            data = JS_EncodeInterpretedFunction(cx, functionObj, &size);
         else
-            ok = JS_XDRScript(xdr, &script);
+            data = JS_EncodeScript(cx, script, &size);
     }
 
-    if (!ok) {
-        rv = NS_ERROR_OUT_OF_MEMORY;
-    } else {
-        // Get the encoded JSXDRState data and write it.  The JSXDRState owns
-        // this buffer memory and will free it beneath JS_XDRDestroy.
-        uint32_t size;
-        const char* data = reinterpret_cast<const char*>(::JS_XDRMemGetData(xdr, &size));
-        NS_ASSERTION(data, "no decoded JSXDRState data!");
-
-        rv = stream->Write32(size);
-        if (NS_SUCCEEDED(rv))
-            rv = stream->WriteBytes(data, size);
-    }
-
-    JS_XDRDestroy(xdr);
+    if (!data)
+        return NS_ERROR_OUT_OF_MEMORY;
+    MOZ_ASSERT(size);
+    rv = stream->Write32(size);
+    if (NS_SUCCEEDED(rv))
+        rv = stream->WriteBytes(static_cast<char *>(data), size);
+    js_free(data);
 
     return rv;
 }
@@ -2911,31 +2920,26 @@ ReadScriptOrFunction(nsIObjectInputStream *stream, JSContext *cx,
     if (NS_FAILED(rv))
         return rv;
 
-    JSXDRState *xdr = JS_XDRNewMem(cx, JSXDR_DECODE);
-    if (!xdr) {
-        nsMemory::Free(data);
-        return NS_ERROR_OUT_OF_MEMORY;
-    }
-
-    JS_XDRMemSetData(xdr, data, size);
-    JS_XDRSetPrincipals(xdr, principal, originPrincipal);
-
-    JSBool ok;
     {
         JSAutoRequest ar(cx);
-        if (scriptp)
-            ok = JS_XDRScript(xdr, scriptp);
-        else
-            ok = JS_XDRFunctionObject(xdr, functionObjp);
+        if (scriptp) {
+            JSScript *script = JS_DecodeScript(cx, data, size, principal, originPrincipal);
+            if (!script)
+                rv = NS_ERROR_OUT_OF_MEMORY;
+            else
+                *scriptp = script;
+        } else {
+            JSObject *funobj = JS_DecodeInterpretedFunction(cx, data, size,
+                                                            principal, originPrincipal);
+            if (!funobj)
+                rv = NS_ERROR_OUT_OF_MEMORY;
+            else
+                *functionObjp = funobj;
+        }
     }
 
-    // We cannot rely on XDR automatically freeing the data memory as we must
-    // use nsMemory::Free to release it.
-    JS_XDRMemSetData(xdr, NULL, 0);
-    JS_XDRDestroy(xdr);
     nsMemory::Free(data);
-
-    return ok ? NS_OK : NS_ERROR_FAILURE;
+    return rv;
 }
 
 NS_IMETHODIMP

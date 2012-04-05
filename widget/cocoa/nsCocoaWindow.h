@@ -59,10 +59,18 @@ class nsMenuBarX;
     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
 
 enum {
-    NSWindowCollectionBehaviorFullScreenPrimary = 1 << 7,
+    NSWindowAnimationBehaviorDefault = 0,
+    NSWindowAnimationBehaviorNone = 2,
+    NSWindowAnimationBehaviorDocumentWindow = 3,
+    NSWindowAnimationBehaviorUtilityWindow = 4,
+    NSWindowAnimationBehaviorAlertPanel = 5,
+    NSWindowCollectionBehaviorFullScreenPrimary = 128, // 1 << 7
 };
 
-@interface NSWindow (NewInMacOS107)
+typedef NSInteger NSWindowAnimationBehavior;
+
+@interface NSWindow (LionWindowFeatures)
+- (void)setAnimationBehavior:(NSWindowAnimationBehavior)newAnimationBehavior;
 - (void)toggleFullScreen:(id)sender;
 @end
 
@@ -212,21 +220,6 @@ typedef struct _nsCocoaWindowList {
 - (void)setDrawsContentsIntoWindowFrame:(BOOL)aState;
 @end
 
-#if !defined(MAC_OS_X_VERSION_10_7) || (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7)
-enum {
-  NSWindowAnimationBehaviorDefault = 0,
-  NSWindowAnimationBehaviorNone = 2,
-  NSWindowAnimationBehaviorDocumentWindow = 3,
-  NSWindowAnimationBehaviorUtilityWindow = 4,
-  NSWindowAnimationBehaviorAlertPanel = 5
-};
-typedef NSInteger NSWindowAnimationBehavior;
-
-@interface NSWindow (LionWindowFeatures)
-- (void)setAnimationBehavior:(NSWindowAnimationBehavior)newAnimationBehavior;
-@end
-#endif
-
 class nsCocoaWindow : public nsBaseWidget, public nsPIWidgetCocoa
 {
 private:
@@ -374,6 +367,8 @@ protected:
   bool                 mSheetNeedsShow; // if this is a sheet, are we waiting to be shown?
                                         // this is used for sibling sheet contention only
   bool                 mFullScreen;
+  bool                 mInFullScreenTransition; // true from the request to enter/exit fullscreen
+                                                // (MakeFullScreen() call) to EnteredFullScreen()
   bool                 mModal;
 
   bool                 mUsesNativeFullScreen; // only true on Lion if SetShowsFullScreenButton(true);

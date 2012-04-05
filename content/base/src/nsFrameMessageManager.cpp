@@ -811,7 +811,8 @@ nsFrameScriptExecutor::LoadFrameScriptInternal(const nsAString& aURL)
       JSAutoRequest ar(mCx);
       JSObject* global = nsnull;
       mGlobal->GetJSObject(&global);
-      if (global) {
+      JSAutoEnterCompartment ac;
+      if (global && ac.enter(mCx, global)) {
         uint32 oldopts = JS_GetOptions(mCx);
         JS_SetOptions(mCx, oldopts | JSOPTION_NO_SCRIPT_RVAL);
 
@@ -1110,9 +1111,7 @@ nsFrameMessageManager::MarkForCC()
 {
   PRUint32 len = mListeners.Length();
   for (PRUint32 i = 0; i < len; ++i) {
-    nsCOMPtr<nsIXPConnectWrappedJS> wjs =
-      do_QueryInterface(mListeners[i].mListener);
-    xpc_UnmarkGrayObject(wjs);
+    xpc_TryUnmarkWrappedGrayObject(mListeners[i].mListener);
   }
   return true;
 }

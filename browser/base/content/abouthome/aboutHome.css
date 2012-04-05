@@ -47,7 +47,6 @@ html {
   background-color: hsl(0,0%,90%);
   background-image: url(chrome://browser/content/abouthome/noise.png),
                     -moz-linear-gradient(hsla(0,0%,100%,.7), hsla(0,0%,100%,.4));
-  background-attachment: fixed;
   color: #000;
   height: 100%;
 }
@@ -255,6 +254,7 @@ body[narrow] #launcher[session] > .launchButton {
   -moz-transition-duration: 0ms;
 }
 
+.launchButton[hidden],
 #launcher:not([session]) > #restorePreviousSessionSeparator,
 #launcher:not([session]) > #restorePreviousSession {
   display: none;
@@ -298,6 +298,10 @@ body[narrow] #restorePreviousSession {
   line-height: 0; /* remove extra vertical space due to non-zero font-size */
 }
 
+#downloads::before {
+  content: url("chrome://browser/content/abouthome/downloads.png");
+}
+
 #bookmarks::before {
   content: url("chrome://browser/content/abouthome/bookmarks.png");
 }
@@ -306,20 +310,20 @@ body[narrow] #restorePreviousSession {
   content: url("chrome://browser/content/abouthome/history.png");
 }
 
-#settings::before {
-  content: url("chrome://browser/content/abouthome/settings.png");
+#apps::before {
+  content: url("chrome://browser/content/abouthome/apps.png");
 }
 
 #addons::before {
   content: url("chrome://browser/content/abouthome/addons.png");
 }
 
-#downloads::before {
-  content: url("chrome://browser/content/abouthome/downloads.png");
-}
-
 #sync::before {
   content: url("chrome://browser/content/abouthome/sync.png");
+}
+
+#settings::before {
+  content: url("chrome://browser/content/abouthome/settings.png");
 }
 
 #restorePreviousSession::before {

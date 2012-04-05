@@ -14,10 +14,12 @@ import org.mozilla.gecko.sync.repositories.domain.ClientRecord;
 import org.mozilla.gecko.sync.repositories.domain.HistoryRecord;
 import org.mozilla.gecko.sync.repositories.domain.PasswordRecord;
 
+import android.content.ContentProviderClient;
 import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.net.Uri;
+import android.os.RemoteException;
 
 public class RepoUtils {
 
@@ -51,6 +53,14 @@ public class RepoUtils {
 
     public Cursor safeQuery(String[] projection, String selection, String[] selectionArgs, String sortOrder) throws NullCursorException {
       return this.safeQuery(null, projection, selection, selectionArgs, sortOrder);
+    }
+
+    // For ContentProviderClient queries.
+    public Cursor safeQuery(ContentProviderClient client, String label, String[] projection,
+                            String selection, String[] selectionArgs, String sortOrder) throws NullCursorException, RemoteException {
+      long queryStart = android.os.SystemClock.uptimeMillis();
+      Cursor c = client.query(uri, projection, selection, selectionArgs, sortOrder);
+      return checkAndLogCursor(label, queryStart, c);
     }
 
     // For SQLiteOpenHelper queries.
@@ -93,7 +103,7 @@ public class RepoUtils {
     return cur.getLong(cur.getColumnIndex(colId));
   }
 
-  public static long getIntFromCursor(Cursor cur, String colId) {
+  public static int getIntFromCursor(Cursor cur, String colId) {
     return cur.getInt(cur.getColumnIndex(colId));
   }
 
@@ -146,7 +156,7 @@ public class RepoUtils {
         Logger.pii(LOG_TAG, "> URI:              " + rec.histURI);
       }
     } catch (Exception e) {
-      Logger.debug(LOG_TAG, "Exception logging bookmark record " + rec, e);
+      Logger.debug(LOG_TAG, "Exception logging history record " + rec, e);
     }
     return rec;
   }
@@ -154,10 +164,10 @@ public class RepoUtils {
   public static void logClient(ClientRecord rec) {
     if (Logger.logVerbose(LOG_TAG)) {
       Logger.trace(LOG_TAG, "Returning client record " + rec.guid + " (" + rec.androidID + ")");
-      Logger.trace(LOG_TAG, "Client Name: " + rec.name);
-      Logger.trace(LOG_TAG, "Client Type: " + rec.type);
+      Logger.trace(LOG_TAG, "Client Name:   " + rec.name);
+      Logger.trace(LOG_TAG, "Client Type:   " + rec.type);
       Logger.trace(LOG_TAG, "Last Modified: " + rec.lastModified);
-      Logger.trace(LOG_TAG, "Deleted: " + rec.deleted);
+      Logger.trace(LOG_TAG, "Deleted:       " + rec.deleted);
     }
   }
 
@@ -217,19 +227,26 @@ public class RepoUtils {
     return "                                     ".substring(0, i);
   }
 
+  private static String dashes(int i) {
+    return "-------------------------------------".substring(0, i);
+  }
+
   public static void dumpCursor(Cursor cur) {
+    dumpCursor(cur, 18, "records");
+  }
+
+  public static void dumpCursor(Cursor cur, int columnWidth, String tag) {
     int originalPosition = cur.getPosition();
     try {
       String[] columnNames = cur.getColumnNames();
       int columnCount      = cur.getColumnCount();
 
-      // 12 chars each column.
       for (int i = 0; i < columnCount; ++i) {
-        System.out.print(fixedWidth(12, columnNames[i]) + " | ");
+        System.out.print(fixedWidth(columnWidth, columnNames[i]) + " | ");
       }
-      System.out.println("");
+      System.out.println("(" + cur.getCount() + " " + tag + ")");
       for (int i = 0; i < columnCount; ++i) {
-        System.out.print("------------" + " | ");
+        System.out.print(dashes(columnWidth) + " | ");
       }
       System.out.println("");
       if (!cur.moveToFirst()) {
@@ -238,18 +255,34 @@ public class RepoUtils {
       }
 
       cur.moveToFirst();
-      while (cur.moveToNext()) {
+      while (!cur.isAfterLast()) {
         for (int i = 0; i < columnCount; ++i) {
-          System.out.print(fixedWidth(12, cur.getString(i)) + " | ");
+          System.out.print(fixedWidth(columnWidth, cur.getString(i)) + " | ");
         }
         System.out.println("");
+        cur.moveToNext();
       }
-      for (int i = 0; i < columnCount; ++i) {
-        System.out.print("---------------");
+      for (int i = 0; i < columnCount-1; ++i) {
+        System.out.print(dashes(columnWidth + 3));
       }
+      System.out.print(dashes(columnWidth + 3 - 1));
       System.out.println("");
     } finally {
       cur.moveToPosition(originalPosition);
     }
+  }
+
+  public static String computeSQLInClause(int items, String field) {
+    StringBuilder builder = new StringBuilder(field);
+    builder.append(" IN (");
+    int i = 0;
+    for (; i < items - 1; ++i) {
+      builder.append("?, ");
+    }
+    if (i < items) {
+      builder.append("?");
+    }
+    builder.append(")");
+    return builder.toString();
   }
 }

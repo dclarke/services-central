@@ -415,7 +415,7 @@ DisableSensorNotifications(SensorType aSensor) {
 }
 
 typedef mozilla::ObserverList<SensorData> SensorObserverList;
-static SensorObserverList *gSensorObservers = NULL;
+static SensorObserverList* gSensorObservers = NULL;
 
 static SensorObserverList &
 GetSensorObservers(SensorType sensor_type) {
@@ -447,6 +447,8 @@ UnregisterSensorObserver(SensorType aSensor, ISensorObserver *aObserver) {
   observers.RemoveObserver(aObserver);
   if(observers.Length() == 0) {
     DisableSensorNotifications(aSensor);
+    delete [] gSensorObservers;
+    gSensorObservers = nsnull;
   }
 }
 
@@ -562,6 +564,20 @@ NotifyScreenOrientationChange(const dom::ScreenOrientation& aScreenOrientation)
 {
   sScreenOrientationObservers.CacheInformation(dom::ScreenOrientationWrapper(aScreenOrientation));
   sScreenOrientationObservers.BroadcastCachedInformation();
+}
+
+bool
+LockScreenOrientation(const dom::ScreenOrientation& aOrientation)
+{
+  AssertMainThread();
+  RETURN_PROXY_IF_SANDBOXED(LockScreenOrientation(aOrientation));
+}
+
+void
+UnlockScreenOrientation()
+{
+  AssertMainThread();
+  PROXY_IF_SANDBOXED(UnlockScreenOrientation());
 }
 
 } // namespace hal

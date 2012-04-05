@@ -27,12 +27,13 @@ add_test(function test_normal()
   let pageURI = NetUtil.newURI("http://example.com/normal");
   waitForFaviconChanged(pageURI, FAVICON_URI,
                         function test_normal_callback() {
-    do_check_true(isUrlHidden(pageURI));
-    do_check_eq(frecencyForUrl(pageURI), 0);
     checkFaviconDataForPage(pageURI, FAVICON_MIMETYPE, FAVICON_DATA,
                             run_next_test);
   });
-  PlacesUtils.favicons.setAndFetchFaviconForPage(pageURI, FAVICON_URI, true);
+
+  addVisits({ uri: pageURI, transition: TRANSITION_TYPED}, function () {
+    PlacesUtils.favicons.setAndFetchFaviconForPage(pageURI, FAVICON_URI, true);
+  });
 });
 
 add_test(function test_aboutURI_bookmarked()
@@ -52,8 +53,8 @@ add_test(function test_aboutURI_bookmarked()
 
 add_test(function test_privateBrowsing_bookmarked()
 {
-  if (!"@mozilla.org/privatebrowsing;1" in Cc) {
-    run_next_next();
+  if (!("@mozilla.org/privatebrowsing;1" in Cc)) {
+    run_next_test();
     return;
   }
 

@@ -61,7 +61,6 @@ using mozilla::dom::StorageChild;
 #include "nsReadableUtils.h"
 #include "nsIObserverService.h"
 #include "nsNetUtil.h"
-#include "nsIPrefBranch.h"
 #include "nsICookiePermission.h"
 #include "nsIPermission.h"
 #include "nsIPermissionManager.h"
@@ -589,12 +588,12 @@ nsDOMStorageManager::RemoveFromStoragesHash(DOMStorageImpl* aStorage)
 nsDOMStorageDBWrapper* DOMStorageImpl::gStorageDB = nsnull;
 
 nsDOMStorageEntry::nsDOMStorageEntry(KeyTypePointer aStr)
-  : nsVoidPtrHashKey(aStr), mStorage(nsnull)
+  : nsPtrHashKey<const void>(aStr), mStorage(nsnull)
 {
 }
 
 nsDOMStorageEntry::nsDOMStorageEntry(const nsDOMStorageEntry& aToCopy)
-  : nsVoidPtrHashKey(aToCopy), mStorage(nsnull)
+  : nsPtrHashKey<const void>(aToCopy), mStorage(nsnull)
 {
   NS_ERROR("DOMStorage horked.");
 }
@@ -1131,10 +1130,6 @@ IndexFinder(nsSessionStorageEntry* aEntry, void* userArg)
 nsresult
 DOMStorageImpl::GetKey(bool aCallerSecure, PRUint32 aIndex, nsAString& aKey)
 {
-  // XXXjst: This is as retarded as the DOM spec is, takes an unsigned
-  // int, but the spec talks about what to do if a negative value is
-  // passed in.
-
   // XXX: This does a linear search for the key at index, which would
   // suck if there's a large numer of indexes. Do we care? If so,
   // maybe we need to have a lazily populated key array here or
@@ -1148,8 +1143,9 @@ DOMStorageImpl::GetKey(bool aCallerSecure, PRUint32 aIndex, nsAString& aKey)
   mItems.EnumerateEntries(IndexFinder, &data);
 
   if (!data.mItem) {
-    // aIndex was larger than the number of accessible keys. Throw.
-    return NS_ERROR_DOM_INDEX_SIZE_ERR;
+    // aIndex was larger than the number of accessible keys. Return null.
+    aKey.SetIsVoid(true);
+    return NS_OK;
   }
 
   aKey = data.mItem->GetKey();
@@ -1318,8 +1314,6 @@ nsDOMStorage::nsDOMStorage()
   : mStorageType(nsPIDOMStorage::Unknown)
   , mEventBroadcaster(nsnull)
 {
-  mSecurityChecker = this;
-
   if (XRE_GetProcessType() != GeckoProcessType_Default)
     mStorageImpl = new StorageChild(this);
   else
@@ -1328,10 +1322,9 @@ nsDOMStorage::nsDOMStorage()
 
 nsDOMStorage::nsDOMStorage(nsDOMStorage& aThat)
   : mStorageType(aThat.mStorageType)
+  , mPrincipal(aThat.mPrincipal)
   , mEventBroadcaster(nsnull)
 {
-  mSecurityChecker = this;
-
   if (XRE_GetProcessType() != GeckoProcessType_Default) {
     StorageChild* other = static_cast<StorageChild*>(aThat.mStorageImpl.get());
     mStorageImpl = new StorageChild(this, *other);
@@ -1382,6 +1375,7 @@ nsDOMStorage::InitAsSessionStorage(nsIPrincipal *aPrincipal, const nsSubstring &
   NS_ENSURE_SUCCESS(rv, rv);
 
   mDocumentURI = aDocumentURI;
+  mPrincipal = aPrincipal;
 
   mStorageType = SessionStorage;
 
@@ -1397,6 +1391,7 @@ nsDOMStorage::InitAsLocalStorage(nsIPrincipal *aPrincipal, const nsSubstring &aD
   NS_ENSURE_SUCCESS(rv, rv);
 
   mDocumentURI = aDocumentURI;
+  mPrincipal = aPrincipal;
 
   mStorageType = LocalStorage;
 
@@ -1495,8 +1490,7 @@ nsDOMStorage::CacheStoragePermissions()
   nsresult rv = ssm->GetSubjectPrincipal(getter_AddRefs(subjectPrincipal));
   NS_ENSURE_SUCCESS(rv, false);
 
-  NS_ASSERTION(mSecurityChecker, "Has non-null mSecurityChecker");
-  return mSecurityChecker->CanAccess(subjectPrincipal);
+  return CanAccess(subjectPrincipal);
 }
 
 // static
@@ -1729,17 +1723,17 @@ nsDOMStorage::CanAccessSystem(nsIPrincipal *aPrincipal)
 bool
 nsDOMStorage::CanAccess(nsIPrincipal *aPrincipal)
 {
-  // Allow C++/system callers to access the storage
-  if (CanAccessSystem(aPrincipal))
+  // Allow C++ callers to access the storage
+  if (!aPrincipal)
     return true;
 
-  nsCAutoString domain;
-  nsCOMPtr<nsIURI> unused;
-  nsresult rv = GetPrincipalURIAndHost(aPrincipal,
-                                       getter_AddRefs(unused), domain);
-  NS_ENSURE_SUCCESS(rv, false);
+  // Allow more powerful principals (e.g. system) to access the storage
+  bool subsumes;
+  nsresult rv = aPrincipal->SubsumesIgnoringDomain(mPrincipal, &subsumes);
+  if (NS_FAILED(rv))
+    return false;
 
-  return domain.Equals(mStorageImpl->mDomain);
+  return subsumes;
 }
 
 nsPIDOMStorage::nsDOMStorageType
@@ -1797,7 +1791,6 @@ nsDOMStorage2::nsDOMStorage2()
 nsDOMStorage2::nsDOMStorage2(nsDOMStorage2& aThat)
 {
   mStorage = new nsDOMStorage(*aThat.mStorage.get());
-  mStorage->mSecurityChecker = mStorage;
   mPrincipal = aThat.mPrincipal;
 }
 
@@ -1808,7 +1801,6 @@ nsDOMStorage2::InitAsSessionStorage(nsIPrincipal *aPrincipal, const nsSubstring 
   if (!mStorage)
     return NS_ERROR_OUT_OF_MEMORY;
 
-  mStorage->mSecurityChecker = this;
   mPrincipal = aPrincipal;
   mDocumentURI = aDocumentURI;
 
@@ -1822,7 +1814,6 @@ nsDOMStorage2::InitAsLocalStorage(nsIPrincipal *aPrincipal, const nsSubstring &a
   if (!mStorage)
     return NS_ERROR_OUT_OF_MEMORY;
 
-  mStorage->mSecurityChecker = this;
   mPrincipal = aPrincipal;
   mDocumentURI = aDocumentURI;
 
@@ -1892,20 +1883,7 @@ nsDOMStorage2::Principal()
 bool
 nsDOMStorage2::CanAccess(nsIPrincipal *aPrincipal)
 {
-  if (mStorage->mSecurityChecker != this)
-    return mStorage->mSecurityChecker->CanAccess(aPrincipal);
-
-  // Allow C++ callers to access the storage
-  if (!aPrincipal)
-    return true;
-
-  // Allow more powerful principals (e.g. system) to access the storage
-  bool subsumes;
-  nsresult rv = aPrincipal->SubsumesIgnoringDomain(mPrincipal, &subsumes);
-  if (NS_FAILED(rv))
-    return false;
-
-  return subsumes;
+  return mStorage->CanAccess(aPrincipal);
 }
 
 nsPIDOMStorage::nsDOMStorageType
