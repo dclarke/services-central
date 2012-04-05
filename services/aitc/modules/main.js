@@ -49,9 +49,9 @@ function AitcSvc() {
   dump("!!! AITC !!! Service initialized\n");
 }
 AitcSvc.prototype = {
-	getAssertion: function _getAssertion(email, audience, cb) {
-		let appShell = Cc["@mozilla.org/appshell/appShellService;1"]
-			.getService(Ci.nsIAppShellService);
+  getAssertion: function _getAssertion(email, audience, cb) {
+    let appShell = Cc["@mozilla.org/appshell/appShellService;1"]
+      .getService(Ci.nsIAppShellService);
     let hiddenDOMWindow = appShell.hiddenDOMWindow;
 
     let frame = hiddenDOMWindow.document.createElement("iframe");
@@ -66,15 +66,15 @@ AitcSvc.prototype = {
       
       let workerWindow = frame.contentWindow;
       let sandbox = new Cu.Sandbox(workerWindow, {
-      	sandboxPrototype: workerWindow,
-      	wantXrays: false
+        sandboxPrototype: workerWindow,
+        wantXrays: false
       });
 
       function successCb(res) {
-      	cb(null, res);
+        cb(null, res);
       }
       function errorCb(err) {
-				cb(err, null);
+        cb(err, null);
       }
       sandbox.importFunction(successCb, "successCb");
       sandbox.importFunction(errorCb, "errorCb");
@@ -91,11 +91,11 @@ AitcSvc.prototype = {
     let doc = hiddenDOMWindow.document;
     let container = doc.body ? doc.body : doc.documentElement;
     container.appendChild(frame);
-	}
+  }
 };
 
 let Aitc = new AitcSvc();
 Aitc.getAssertion('anant@kix.in', 'http://google.com', function(err, res) {
-	if (err) dump("!!! AITC !!! ERROR: " + err + "\n");
-	else dump("!!! AITC !!! Got assertion: " + res + "\n");
+  if (err) dump("!!! AITC !!! ERROR: " + err + "\n");
+  else dump("!!! AITC !!! Got assertion: " + res + "\n");
 });
