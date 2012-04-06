@@ -381,7 +381,7 @@ AitcClient.prototype = {
               } else {
                 app.value.manifest = manifest;
                 finalCommands.push({id: app.id, value: app.value});
-                dump("!!! AITC !!!! added to finalCommands " + id + "\n");
+                dump("!!! AITC !!!! added to finalCommands " + app.id + "\n");
               }
             } else {
               // Not 200
