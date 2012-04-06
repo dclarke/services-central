@@ -58,7 +58,7 @@ function AuthRESTRequest(uri, authToken) {
 AuthRESTRequest.prototype = {
   __proto__: RESTRequest.prototype,
   dispatch: function dispatch(method, data, onComplete, onProgress) {
-    var sig = Utils.computeHTTPMACSHA1(
+    let sig = Utils.computeHTTPMACSHA1(
       this.authToken.id,
       this.authToken.key,
       method,
@@ -103,8 +103,8 @@ AitcClient.prototype = {
   },
 
   getApps: function getApps(cb) {
-    var self = this;
-    var req = this._makeRequest(this.uri + '/apps/?full=1');
+    let self = this;
+    let req = this._makeRequest(this.uri + '/apps/?full=1');
     if (this.collectionLastModified) {
       req.setHeader("X-If-Modified-Since", this.appsLastModified);
     }
@@ -122,19 +122,19 @@ AitcClient.prototype = {
       }
 
       dump("!!! AITC !!! Got from getApps: " + req.response.body + " :: " + req.response.body.length + "\n");
-      var tmp = JSON.parse(req.response.body);
+      let tmp = JSON.parse(req.response.body);
       cb(null, tmp["apps"]);
       self.appsLastModified = parseInt(req.response.headers['x-timestamp']);
     });
   },
 
   getAppDetails: function getDetails(since, cb) {
-    var self = this;
-    var uri = this.uri + '/apps/?full=1';
+    let self = this;
+    let uri = this.uri + '/apps/?full=1';
     if (since) {
       uri += '&after=' + encodeURIComponent(since);
     }
-    var req = this._makeRequest(this.uri);
+    let req = this._makeRequest(this.uri);
     req.get(function (error) {
       if (error) {
         self.error(error);
@@ -150,14 +150,14 @@ AitcClient.prototype = {
   },
 
   _makeAppURI: function _makeAppURI(origin) {
-    var part = btoa(Utils._sha1(origin)).replace(/\+/, '-').replace(/\//, '_').replace(/=/, '');
+    let part = btoa(Utils._sha1(origin)).replace(/\+/, '-').replace(/\//, '_').replace(/=/, '');
     return this.uri + '/apps/' + part;
   },
 
   putApp: function putApp(appRec, appLastModified, cb) {
-    var self = this;
-    var uri = this._makeAppURI(appRec.origin);
-    var req = this._makeRequest(uri);
+    let self = this;
+    let uri = this._makeAppURI(appRec.origin);
+    let req = this._makeRequest(uri);
     if (appLastModified) {
       req.setHeader('X-If-Unmodified-Since', appLastModified);
     }
@@ -186,9 +186,9 @@ AitcClient.prototype = {
   },
 
   deleteApp: function deleteApp(origin, appLastModified, cb) {
-    var self = this;
-    var uri = this._makeAppURI(origin);
-    var req = this._makeRequest(uri);
+    let self = this;
+    let uri = this._makeAppURI(origin);
+    let req = this._makeRequest(uri);
     if (appLastModified) {
       req.setHeader('X-If-Unmodified-Since', appLastModified);
     }
@@ -218,8 +218,8 @@ AitcClient.prototype = {
   },
 
   getDevices: function getDevices(cb) {
-    var self = this;
-    var req = this._makeRequest(this.uri + '/devices/');
+    let self = this;
+    let req = this._makeRequest(this.uri + '/devices/');
     if (this.devicesLastModified) {
       req.setHeader('X-If-Modified-Since', this.devicesLastModified);
     }
@@ -238,8 +238,8 @@ AitcClient.prototype = {
   },
 
   putDevice: function (data, lastModified, cb) {
-    var self = this;
-    var req = this._makeRequest(this._makeDeviceURI(data.uuid));
+    let self = this;
+    let req = this._makeRequest(this._makeDeviceURI(data.uuid));
     if (lastModified) {
       req.setHeader('X-If-Unmodified-Since', lastModified);
     }
@@ -258,8 +258,8 @@ AitcClient.prototype = {
   },
 
   deleteDevice: function (uuid, lastModified, cb) {
-    var self = this;
-    var req = this._makeRequest(this._makeDeviceURI(uuid));
+    let self = this;
+    let req = this._makeRequest(this._makeDeviceURI(uuid));
     if (lastModified) {
       req.setHeader('X-If-Unmodified-Since', lastModified);
     }
@@ -278,8 +278,8 @@ AitcClient.prototype = {
   },
 
   deleteCollection: function (cb) {
-    var self = this;
-    var req = this._makeRequest(this.uri);
+    let self = this;
+    let req = this._makeRequest(this.uri);
     req.delete(function (error) {
       if (error) {
         self.error(error);
@@ -291,26 +291,26 @@ AitcClient.prototype = {
   },
 
   processResponse: function processResponse(resp, callback) {
-    var self = this;
-    var allApps = DOMApplicationRegistry.getAllWithoutManifests(function (apps) {
-      var existingByOrigin = {};
-      var originToId = {};
-      var toDelete = {};
-      var commands = [];
+    let self = this;
+    let allApps = DOMApplicationRegistry.getAllWithoutManifests(function (apps) {
+      let existingByOrigin = {};
+      let originToId = {};
+      let toDelete = {};
+      let commands = [];
       
-      for (var i in apps) {
+      for (let i in apps) {
         originToId[apps[i].origin] = i;
         existingByOrigin[apps[i].origin] = toDelete[apps[i].origin] = apps[i];
       }
       
-      for (var i=0; i<resp.length; i++) {
-        var origin = resp[i].origin;
+      for (let i=0; i<resp.length; i++) {
+        let origin = resp[i].origin;
         delete toDelete[origin];
         if ((! (origin in existingByOrigin)) || existingByOrigin[origin].installTime < resp[i].installTime) {
-          var id = originToId[origin] || DOMApplicationRegistry.makeAppId();
+          let id = originToId[origin] || DOMApplicationRegistry.makeAppId();
 
           // Remap back to format expected by DOMApplicationRegistry
-          var realVal = {
+          let realVal = {
             origin: resp[i].origin,
             installOrigin: resp[i].installOrigin,
             installedAt: resp[i].installedAt,
@@ -318,7 +318,7 @@ AitcClient.prototype = {
             manifestURL: resp[i].manifestPath,
             receipts: resp[i].receipts
           };
-          var record = {id: id, value: realVal};
+          let record = {id: id, value: realVal};
           commands.push(record);
         }
       }
@@ -335,7 +335,7 @@ AitcClient.prototype = {
           return false;
 
         if (aManifest.installs_allowed_from) {
-          ok = false;
+          let ok = false;
           aManifest.installs_allowed_from.forEach(function(aOrigin) {
             if (aOrigin == "*" || aOrigin == aInstallOrigin)
               ok = true;
@@ -351,8 +351,10 @@ AitcClient.prototype = {
             finalCommands.push({id: originToId[i], deleted: true});
           }
           if (finalCommands.length) {
+            dump("!!! AITC !!! finished fetching, calling DOMApplicationRegistry.updateApps\n");
             DOMApplicationRegistry.updateApps(finalCommands, callback);
           } else {
+            dump("!!! AITC !!! finished fetching, no finalCommands\n");
             callback();
           }
         }
@@ -372,20 +374,18 @@ AitcClient.prototype = {
           xhr.open("GET", url, true);
           xhr.addEventListener("load", function() {
             if (xhr.status == 200) {
-              try {
-                let installOrigin = app.value.installOrigin;
-                let manifest = JSON.parse(xhr.responseText, installOrigin);
-                if (!checkManifest(manifest, installOrigin)) {
-                  // We'll get this app on the next round
-                } else {
-                  app.value.manifest = manifest;
-                  finalCommands.push({id: app.id, value: app.value});
-                }
-              } catch(e) {
-                // Invalid manifest
+              let installOrigin = app.value.installOrigin;
+              let manifest = JSON.parse(xhr.responseText, installOrigin);
+              if (!checkManifest(manifest, installOrigin)) {
+                // We'll get this app on the next round
+              } else {
+                app.value.manifest = manifest;
+                finalCommands.push({id: app.id, value: app.value});
+                dump("!!! AITC !!!! added to finalCommands " + id + "\n");
               }
             } else {
               // Not 200
+              dump("!!! AITC !!! got non-200 while fetching manifest " + xhr.status + "\n");
             }
             
             // Am I last?
@@ -406,7 +406,7 @@ AitcClient.prototype = {
   },
 
   checkServer: function checkServer() {
-    var self = this;
+    let self = this;
     dump('!!! AITC !!! Starting server check\n');
     this.getApps(function (error, apps) {
       if (apps && ! error) {
@@ -419,10 +419,10 @@ AitcClient.prototype = {
   },
 
   runPeriodically: function runPeriodically() {
-    var self = this;
+    let self = this;
     this.timer = Cc["@mozilla.org/timer;1"]
       .createInstance(Ci.nsITimer);
-    var event = {
+    let event = {
       notify: function (timer) {
         self.checkServer();
       }
@@ -435,7 +435,7 @@ AitcClient.prototype = {
     // We need to sanitize the app record a bit to match what the server expects
     // manifestURL -> manifestPath (this could probalby be changed in registry)
     // We don't store manifests on the server
-    var record = {
+    let record = {
       origin: app.origin,
       installOrigin: app.installOrigin,
       manifestPath: app.manifestURL,
