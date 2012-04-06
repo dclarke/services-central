@@ -108,7 +108,7 @@ let webappsUI = {
       label: bundle.getString("webapps.install"),
       accessKey: bundle.getString("webapps.install.accesskey"),
       callback: function(notification) {
-        installDone = true;
+        //installDone = true;
         DOMApplicationRegistry.confirmInstall(aData);
       }
     };
