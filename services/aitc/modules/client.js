@@ -51,7 +51,7 @@ const EXPORTED_SYMBOLS = [
 function AuthRESTRequest(uri, authToken) {
   RESTRequest.call(this, uri);
   this.authToken = authToken;
-  this._log.level = 20;
+  this._log.level = 30;
   this._log.appenders.push(new Log4Moz.DumpAppender());
 }
 
@@ -105,7 +105,7 @@ AitcClient.prototype = {
   getApps: function getApps(cb) {
     let self = this;
     let req = this._makeRequest(this.uri + '/apps/?full=1');
-    if (this.collectionLastModified) {
+    if (this.appsLastModified) {
       req.setHeader("X-If-Modified-Since", this.appsLastModified);
     }
     req.get(function (error) {
@@ -174,8 +174,8 @@ AitcClient.prototype = {
         dump("!!! AITC !!! Got from putApp 412\n");
         cb({preconditionFailed: true});
         return;
-      } else if (req.response.status != 201) {
-        dump("!!! AITC !!! Got non-201 from putApp " + req.response.status + " :: " + req.response.body + "\n");
+      } else if (req.response.status != 201 && req.response.status != 204) {
+        dump("!!! AITC !!! Got non-201/204 from putApp " + req.response.status + " :: " + req.response.body + "\n");
         self.error();
         return;
       }
@@ -297,12 +297,12 @@ AitcClient.prototype = {
       let originToId = {};
       let toDelete = {};
       let commands = [];
-      
+
       for (let i in apps) {
         originToId[apps[i].origin] = i;
         existingByOrigin[apps[i].origin] = toDelete[apps[i].origin] = apps[i];
       }
-      
+
       for (let i=0; i<resp.length; i++) {
         let origin = resp[i].origin;
         delete toDelete[origin];
@@ -387,7 +387,7 @@ AitcClient.prototype = {
               // Not 200
               dump("!!! AITC !!! got non-200 while fetching manifest " + xhr.status + "\n");
             }
-            
+
             // Am I last?
             done += 1;
             finishedFetching(done);
