@@ -297,10 +297,12 @@ AitcClient.prototype = {
       var originToId = {};
       var toDelete = {};
       var commands = [];
+      
       for (var i in apps) {
         originToId[apps[i].origin] = i;
         existingByOrigin[apps[i].origin] = toDelete[apps[i].origin] = apps[i];
       }
+      
       for (var i=0; i<resp.length; i++) {
         var origin = resp[i].origin;
         delete toDelete[origin];
@@ -320,13 +322,85 @@ AitcClient.prototype = {
           commands.push(record);
         }
       }
-      for (var i in toDelete) {
-        commands.push({id: originToId[i], deleted: true});
+
+      // Update manifests for all the commands we have so far
+      let done = 0;
+      let finalCommands = [];
+      let toUpdate = commands.length;
+
+      // Copied from Webapps.js, refactor into common?
+      function checkManifest(aManifest, aInstallOrigin) {
+        // TODO : check for install_allowed_from
+        if (aManifest.name == undefined)
+          return false;
+
+        if (aManifest.installs_allowed_from) {
+          ok = false;
+          aManifest.installs_allowed_from.forEach(function(aOrigin) {
+            if (aOrigin == "*" || aOrigin == aInstallOrigin)
+              ok = true;
+          });
+          return ok;
+        }
+        return true;
       }
-      if (commands.length) {
-        DOMApplicationRegistry.updateApps(commands, callback);
-      } else {
-        callback();
+
+      function finishedFetching(num) {
+        if (num == toUpdate) {
+          for (let i in toDelete) {
+            finalCommands.push({id: originToId[i], deleted: true});
+          }
+          if (finalCommands.length) {
+            DOMApplicationRegistry.updateApps(finalCommands, callback);
+          } else {
+            callback();
+          }
+        }
+      }
+
+      for (let j = 0; j < toUpdate; j++) {
+        let app = commands[j];
+        let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].createInstance(Ci.nsIXMLHttpRequest);
+
+        let url = app.value.manifestURL;
+        if (url[0] == "/") {
+          url = app.value.origin + app.value.manifestURL;
+        }
+
+        dump("!!! AITC !!! going to get manifest " + url + "\n");
+        try {
+          xhr.open("GET", url, true);
+          xhr.addEventListener("load", function() {
+            if (xhr.status == 200) {
+              try {
+                let installOrigin = app.value.installOrigin;
+                let manifest = JSON.parse(xhr.responseText, installOrigin);
+                if (!checkManifest(manifest, installOrigin)) {
+                  // We'll get this app on the next round
+                } else {
+                  app.value.manifest = manifest;
+                  finalCommands.push({id: app.id, value: app.value});
+                }
+              } catch(e) {
+                // Invalid manifest
+              }
+            } else {
+              // Not 200
+            }
+            
+            // Am I last?
+            done += 1;
+            finishedFetching(done);
+          }, false);
+          xhr.addEventListener("error", function() {
+            // Network error
+            done += 1;
+            finishedFetching(done);
+          }, false);
+          xhr.send(null);
+        } catch (e) {
+          dump("!!! AITC !!! Exception while fetching manifest " + e + "\n");
+        }
       }
     });
   },
