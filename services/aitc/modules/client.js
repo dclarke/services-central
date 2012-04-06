@@ -19,6 +19,7 @@
  *
  * Contributor(s):
  *  Ian Bicking <ianb@mozilla.com>
+ *  Anant Narayanan <anant@kix.in>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -62,11 +63,12 @@ AuthRESTRequest.prototype = {
       this.authToken.key,
       method,
       this.uri,
-      {});
+      {}
+    );
     this.setHeader("Authorization", sig.getHeader());
     dump("!! Complete request: " + method + " " + this.uri.asciiSpec + "\n");
     RESTRequest.prototype.dispatch.call(this, method, data, function (error) {
-      dump("!! Request result: " + this.uri.asciiSpec + " status: " + this.status + " body: " + this.body + "\n");
+      dump("!! Request result: " + this.uri.asciiSpec + " status: " + this.status + " body: " + this.response.body + "\n");
       onComplete(error);
     }, onProgress);
   }
@@ -109,13 +111,16 @@ AitcClient.prototype = {
     req.get(function (error) {
       if (error) {
         self.error(error);
-	cb(error);
+        cb(error);
         return;
       }
-      if (this.response.status == 304) {
+      if (req.response.status == 304) {
         cb(null, null);
       }
-      cb(null, JSON.parse(this.body));
+
+      dump("!!! AITC !!! Got from getApps: " + req.response.body + " :: " + req.response.body.length + "\n");
+      var tmp = JSON.parse(req.response.body);
+      cb(null, tmp["apps"]);
       self.appsLastModified = parseInt(req.response.headers['x-timestamp']);
     });
   },
@@ -131,13 +136,13 @@ AitcClient.prototype = {
       if (error) {
         self.error(error);
         cb(error);
-	return;
+        return;
       }
-      if (this.response.status == 204) {
+      if (req.response.status == 204) {
         cb(null, []);
-	return;
+        return;
       }
-      cb(null, JSON.parse(this.body));
+      cb(null, JSON.parse(req.response.body));
     });
   },
 
@@ -157,11 +162,11 @@ AitcClient.prototype = {
       if (error) {
         self.error(error);
         cb(error);
-	return;
+        return;
       }
-      if (this.status == 412) {
+      if (req.status == 412) {
         cb({preconditionFailed: true});
-	return;
+        return;
       }
       cb();
     });
@@ -177,12 +182,12 @@ AitcClient.prototype = {
     req.delete(function (error) {
       if (error) {
         self.error(error);
-	cb(error);
-	return;
+        cb(error);
+        return;
       }
-      if (this.status == 412) {
+      if (req.status == 412) {
         cb({preconditionFailed: true});
-	return;
+        return;
       }
       cb();
     });
@@ -209,13 +214,13 @@ AitcClient.prototype = {
       if (error) {
         self.error(error);
         cb(error);
-	return;
+        return;
       }
-      if (this.status == 304) {
+      if (req.status == 304) {
         cb(null, null);
         return;
       }
-      cb(null, JSON.parse(this.body));
+      cb(null, JSON.parse(this.response.body));
     });
   },
 
@@ -228,12 +233,12 @@ AitcClient.prototype = {
     req.put(function (error) {
       if (error) {
         self.error(error);
-	cb(error);
-	return;
+        cb(error);
+        return;
       }
-      if (this.status == 412) {
+      if (req.status == 412) {
         cb({preconditionFailed: true});
-	return;
+        return;
       }
       cb();
     });
@@ -248,12 +253,12 @@ AitcClient.prototype = {
     req.delete(function (error) {
       if (error) {
         self.error(error);
-	cb(error);
-	return;
+        cb(error);
+        return;
       }
-      if (this.status == 412) {
+      if (req.status == 412) {
         cb({preconditionFailed: true});
-	return;
+        return;
       }
       cb();
     });
@@ -287,7 +292,7 @@ AitcClient.prototype = {
         var origin = resp[i].origin;
         delete toDelete[origin];
         if ((! (origin in existingByOrigin)) || existingByOrigin[origin].installTime < resp[i].installTime) {
-          var id = originToId(origin) || DOMApplicationRegistry.makeAppId();
+          var id = originToId[origin] || DOMApplicationRegistry.makeAppId();
           var record = {id: id, value: resp[i]};
           commands.push(record);
         }
@@ -307,7 +312,7 @@ AitcClient.prototype = {
     var self = this;
     dump('!!! AITC !!! Starting server check\n');
     this.getApps(function (error, apps) {
-      dump('!!! AITC !!! got apps ' + (apps && apps.length) + "\n");
+      dump('!!! AITC !!! got apps ' + apps.length + "\n");
       if (apps && ! error) {
         self.processResponse(apps, function () {
           dump('!!! saved result\n');
@@ -319,13 +324,13 @@ AitcClient.prototype = {
   runPeriodically: function runPeriodically() {
     var self = this;
     this.timer = Cc["@mozilla.org/timer;1"]
-            .createInstance(Ci.nsITimer);
+      .createInstance(Ci.nsITimer);
     var event = {
       notify: function (timer) {
         self.checkServer();
       }
     };
-    this.timer.initWithCallback(event, 30000, Ci.nsITimer.TYPE_REPEATING_SLACK);
+    this.timer.initWithCallback(event, 10000, Ci.nsITimer.TYPE_REPEATING_SLACK);
   },
 
   remoteInstall: function (app, callback) {
