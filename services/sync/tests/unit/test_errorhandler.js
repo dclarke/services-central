@@ -155,6 +155,8 @@ add_test(function test_401_logout() {
   // Make sync fail due to login rejected.
   setBasicCredentials("janedoe", "irrelevant", "irrelevant");
   Service._updateCachedURLs();
+  server.registerPathHandler("/2.0/storage/meta/global", unauthorized_handler);
+  server.registerPathHandler("/2.0/info/collections", unauthorized_handler);
 
   server.registerPathHandler("/2.0/storage/meta/global", unauthorized_handler);
   server.registerPathHandler("/2.0/info/collections", unauthorized_handler);
