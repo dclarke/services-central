@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const Cu = Components.utils; 
+const Cu = Components.utils;
 const Cc = Components.classes;
 const Ci = Components.interfaces;
 
@@ -30,6 +30,7 @@ XPCOMUtils.defineLazyGetter(this, "ppmm", function() {
 let DOMApplicationRegistry = {
   appsFile: null,
   webapps: { },
+  confirmRemoteInstall: null,
 
   init: function() {
     this.messages = ["Webapps:Install", "Webapps:Uninstall",
@@ -51,7 +52,7 @@ let DOMApplicationRegistry = {
     this._loadJSONAsync(this.appsFile, (function(aData) { this.webapps = aData; }).bind(this));
 
     try {
-      let hosts = Services.prefs.getCharPref("dom.mozApps.whitelist")
+      let hosts = Services.prefs.getCharPref("dom.mozApps.whitelist");
       hosts.split(",").forEach(function(aHost) {
         Services.perms.add(Services.io.newURI(aHost, null, null), "webapps-manage",
                            Ci.nsIPermissionManager.ALLOW_ACTION);
@@ -175,26 +176,33 @@ let DOMApplicationRegistry = {
       }
     }
     else {
-      let uuidGenerator = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerator);
-      id = uuidGenerator.generateUUID().toString();
+      id = this.makeAppId();
     }
 
-    let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", id], true, true);
+    let appObject = this._cloneAppObject(app);
+    appObject.installTime = (new Date()).getTime();
 
-    let manFile = dir.clone();
-    manFile.append("manifest.json");
-    this._writeFile(manFile, JSON.stringify(app.manifest));
+    let continueInstall = (function () {
+      let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", id], true, true);
 
-    this.webapps[id] = this._cloneAppObject(app);
-    delete this.webapps[id].manifest;
-    this.webapps[id].installTime = (new Date()).getTime()
+      let manFile = dir.clone();
+      manFile.append("manifest.json");
+      this._writeFile(manFile, JSON.stringify(appObject.manifest));
+      delete appObject.manifest;
+      this.webapps[id] = appObject;
+      if (!aFromSync)
+        this._saveApps((function() {
+          ppmm.sendAsyncMessage("Webapps:Install:Return:OK", aData);
+          Services.obs.notifyObservers(this, "webapps-sync-install", id);
+        }).bind(this));
+    }).bind(this);
 
-    
-    if (!aFromSync)
-      this._saveApps((function() {
-        ppmm.sendAsyncMessage("Webapps:Install:Return:OK", aData);
-        Services.obs.notifyObservers(this, "webapps-sync-install", id);
-      }).bind(this));
+    dump("!!! Trying to install, with remoteInstall: " + this.confirmRemoteInstall + "\n");
+    if (this.confirmRemoteInstall) {
+      this.confirmRemoteInstall(app, continueInstall);
+    } else {
+      continueInstall();
+    }
   },
 
   _appId: function(aURI) {
@@ -203,6 +211,11 @@ let DOMApplicationRegistry = {
         return id;
     }
     return null;
+  },
+
+  makeAppId: function() {
+    let uuidGenerator = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerator);
+    return uuidGenerator.generateUUID().toString();
   },
 
   _saveApps: function(aCallback) {
@@ -230,7 +243,7 @@ let DOMApplicationRegistry = {
         aFinalCallback(aData);
       else
         this._readManifests(aData, aFinalCallback, index + 1);
-    }).bind(this)); 
+    }).bind(this));
   },
 
   uninstall: function(aData) {
@@ -296,7 +309,7 @@ let DOMApplicationRegistry = {
     aData.apps = [];
     let tmp = [];
 
-    for (id in this.webapps) {
+    for (let id in this.webapps) {
       let app = this._cloneAppObject(this.webapps[id]);
       aData.apps.push(app);
       tmp.push({ id: id });
@@ -307,6 +320,15 @@ let DOMApplicationRegistry = {
         aData.apps[i].manifest = aResult[i].manifest;
       ppmm.sendAsyncMessage("Webapps:GetAll:Return:OK", aData);
     }).bind(this));
+  },
+
+  getAllWithoutManifests: function(aCallback) {
+    let result = {};
+    for (let id in this.webapps) {
+      let app = this._cloneAppObject(this.webapps[id]);
+      result[id] = app;
+    }
+    aCallback(result);
   },
 
   getManifestFor: function(aOrigin, aCallback) {
@@ -333,7 +355,7 @@ let DOMApplicationRegistry = {
     let app = this._cloneAppObject(this.webapps[aId]);
     return app;
   },
-  
+
   itemExists: function(aId) {
     return !!this.webapps[aId];
   },
@@ -404,7 +426,7 @@ DOMApplicationManifest = function(aManifest, aOrigin) {
                                                           .QueryInterface(Ci.nsIToolkitChromeRegistry);
   let locale = chrome.getSelectedLocale("browser").toLowerCase();
   this._localeRoot = this._manifest;
-  
+
   if (this._manifest.locales && this._manifest.locales[locale]) {
     this._localeRoot = this._manifest.locales[locale];
   }
@@ -414,7 +436,7 @@ DOMApplicationManifest = function(aManifest, aOrigin) {
     if (lang != locale && this._manifest.locales[lang])
       this._localeRoot = this._manifest.locales[lang];
   }
-}
+};
 
 DOMApplicationManifest.prototype = {
   _localeProp: function(aProp) {
@@ -426,27 +448,27 @@ DOMApplicationManifest.prototype = {
   get name() {
     return this._localeProp("name");
   },
-  
+
   get description() {
     return this._localeProp("description");
   },
-  
+
   get version() {
     return this._localeProp("version");
   },
-  
+
   get launch_path() {
     return this._localeProp("launch_path");
   },
-  
+
   get developer() {
     return this._localeProp("developer");
   },
-  
+
   get icons() {
     return this._localeProp("icons");
   },
-  
+
   iconURLForSize: function(aSize) {
     let icons = this._localeProp("icons");
     if (!icons)
@@ -462,11 +484,11 @@ DOMApplicationManifest.prototype = {
     }
     return icon;
   },
-  
+
   fullLaunchPath: function() {
     let launchPath = this._localeProp("launch_path");
     return this._origin.resolve(launchPath ? launchPath : "");
   }
-}
+};
 
 DOMApplicationRegistry.init();
