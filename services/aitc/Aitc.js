@@ -44,6 +44,13 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 
+const TEST_TOKEN = {
+  "api_endpoint": "https://dev-aitc1.services.mozilla.com/1.0/42",
+  "id": "eyJleHBpcmVzIjogMTM2NTAxMDg5OC4xMTk1MDk5LCAic2FsdCI6ICI1YTE3ZDYiLCAidWlkIjogNDJ9L7vI7dWORWRocv_flcwuxr59yxs=",
+  "key": "qTZf4ZFpAMpMoeSsX3zVRjiqmNs=",
+  "uid": 42
+};
+
 function AitcService() {
   this.wrappedJSObject = this;
 }
@@ -52,6 +59,8 @@ AitcService.prototype = {
 
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,
                                          Ci.nsISupportsWeakReference]),
+
+  client: null,
 
   observe: function _observe(subject, topic, data) {
     switch (topic) {
@@ -64,10 +73,15 @@ AitcService.prototype = {
       dump("!!! AITC !!! final-ui-startup!\n");
       // Start AITC service after 5000ms
       this.timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+      let self = this;
       this.timer.initWithCallback({
         notify: function() {
           Cu.import("resource://services-aitc/main.js");
+          Cu.import("resource://services-aitc/aitcclient.js");
+          self.client = new AitcClient(TEST_TOKEN);
+          self.client.runPeriodically();
           dump("!!! AITC !!! SERVICE LOADED!\n");
+          dump("!!! AITC !!! client: " + self.client + "\n");
         }
       }, 5000, Ci.nsITimer.TYPE_ONE_SHOT);
       break;
