@@ -79,7 +79,7 @@ function prepareServer() {
 
   do_check_eq(Service.userAPI, "http://localhost:8080/user/1.0/");
   let server = new SyncServer();
-  server.registerUser("johndoe");
+  server.registerUser("johndoe", "ilovejane");
   server.start();
   return server;
 }
@@ -225,7 +225,7 @@ add_test(function test_momentary_401_info_collections() {
                                 "weave:service:sync:error",
                                 undo,
                                 "weave:service:sync:finish",
-                                Service.infoURL);
+                                Service.baseURL + "info/collections");
 });
 
 add_test(function test_momentary_401_storage() {

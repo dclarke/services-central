@@ -145,8 +145,11 @@ Tracker.prototype = {
       return false;
 
     // Default to the current time in seconds if no time is provided
-    if (when == null)
-      when = Math.floor(Date.now() / 1000);
+    if (when == null) {
+      when = Date.now() - 0;
+    } else {
+      Utils.ensureMillisecondsTimestamp(when);
+    }
 
     // Add/update the entry if we have a newer time
     if ((this.changedIDs[id] || -Infinity) < when) {
@@ -572,8 +575,7 @@ SyncEngine.prototype = {
   // How many records to process in a single batch.
   applyIncomingBatchSize: DEFAULT_STORE_BATCH_SIZE,
 
-  get storageURL() Svc.Prefs.get("clusterURL") + SYNC_API_VERSION +
-    "/" + Identity.username + "/storage/",
+  get storageURL() Svc.Prefs.get("clusterURL") + SYNC_API_VERSION + "/storage/",
 
   get engineURL() this.storageURL + this.name,
 
@@ -594,9 +596,11 @@ SyncEngine.prototype = {
    * lastSync is a timestamp in server time.
    */
   get lastSync() {
-    return parseFloat(Svc.Prefs.get(this.name + ".lastSync", "0"));
+    return parseInt(Svc.Prefs.get(this.name + ".lastSync", "0"), 10);
   },
   set lastSync(value) {
+    Utils.ensureMillisecondsTimestamp(value);
+
     // Reset the pref in-case it's a number instead of a string
     Svc.Prefs.reset(this.name + ".lastSync");
     // Store the value as a string to keep floating point precision
@@ -752,7 +756,7 @@ SyncEngine.prototype = {
                    " outgoing items pre-reconciliation");
 
     // Keep track of what to delete at the end of sync
-    this._delete = {};
+    this._deleteIDs = [];
   },
 
   // Process incoming records
@@ -770,7 +774,7 @@ SyncEngine.prototype = {
     newitems.newer = this.lastSync;
     newitems.full  = true;
     newitems.limit = batchSize;
-    
+
     // applied    => number of items that should be applied.
     // failed     => number of items that failed in this sync.
     // newFailed  => number of items that failed for the first time in this sync.
@@ -832,7 +836,7 @@ SyncEngine.prototype = {
 
       // Track the collection for the WBO.
       item.collection = self.name;
-      
+
       // Remember which records were processed
       handled.push(item.id);
 
@@ -921,7 +925,7 @@ SyncEngine.prototype = {
     // Mobile: check if we got the maximum that we requested; get the rest if so.
     if (handled.length == newitems.limit) {
       let guidColl = new Collection(this.engineURL);
-      
+
       // Sort and limit so that on mobile we only get the last X records.
       guidColl.limit = this.downloadLimit;
       guidColl.newer = this.lastSync;
@@ -1015,11 +1019,7 @@ SyncEngine.prototype = {
   _deleteId: function _deleteId(id) {
     this._tracker.removeChangedID(id);
 
-    // Remember this id to delete at the end of sync
-    if (this._delete.ids == null)
-      this._delete.ids = [id];
-    else
-      this._delete.ids.push(id);
+    this._deleteIDs.push(id);
   },
 
   /**
@@ -1044,9 +1044,11 @@ SyncEngine.prototype = {
     let locallyModified = item.id in this._modified;
 
     // TODO Handle clock drift better. Tracked in bug 721181.
+    // ASSUMPTION: The current record was associated with the most recent HTTP
+    // request. This is a horrible assumption and should be fixed.
     let remoteAge = AsyncResource.serverTime - item.modified;
     let localAge  = locallyModified ?
-      (Date.now() / 1000 - this._modified[item.id]) : null;
+      (Date.now() - this._modified[item.id]) : null;
     let remoteIsNewer = remoteAge < localAge;
 
     this._log.trace("Reconciling " + item.id + ". exists=" +
@@ -1119,7 +1121,7 @@ SyncEngine.prototype = {
         // appropriate reconciling can be performed.
         if (dupeID in this._modified) {
           locallyModified = true;
-          localAge = Date.now() / 1000 - this._modified[dupeID];
+          localAge = Date.now() - this._modified[dupeID];
           remoteIsNewer = remoteAge < localAge;
 
           this._modified[item.id] = this._modified[dupeID];
@@ -1229,9 +1231,10 @@ SyncEngine.prototype = {
         }
 
         // Update server timestamp from the upload.
-        let modified = resp.headers["x-weave-timestamp"];
-        if (modified > this.lastSync)
+        let modified = resp.headers["x-timestamp"];
+        if (modified > this.lastSync) {
           this.lastSync = modified;
+        }
 
         let failed_ids = Object.keys(resp.obj.failed);
         if (failed_ids.length)
@@ -1279,26 +1282,10 @@ SyncEngine.prototype = {
     this._log.trace("Finishing up sync");
     this._tracker.resetScore();
 
-    let doDelete = Utils.bind2(this, function(key, val) {
+    while (this._deleteIDs.length > 0) {
       let coll = new Collection(this.engineURL, this._recordObj);
-      coll[key] = val;
+      coll.ids = this._deleteIDs.splice(0, 100);
       coll.delete();
-    });
-
-    for (let [key, val] in Iterator(this._delete)) {
-      // Remove the key for future uses
-      delete this._delete[key];
-
-      // Send a simple delete for the property
-      if (key != "ids" || val.length <= 100)
-        doDelete(key, val);
-      else {
-        // For many ids, split into chunks of at most 100
-        while (val.length > 0) {
-          doDelete(key, val.slice(0, 100));
-          val = val.slice(100);
-        }
-      }
     }
   },
 
@@ -1360,7 +1347,8 @@ SyncEngine.prototype = {
 
   wipeServer: function wipeServer() {
     let response = new Resource(this.engineURL).delete();
-    if (response.status != 200 && response.status != 404) {
+    if (response.status != 200 && response.status != 204 &&
+        response.status != 404) {
       throw response;
     }
     this._resetClient();

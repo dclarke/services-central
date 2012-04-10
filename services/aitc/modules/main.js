@@ -41,61 +41,148 @@ const Ci = Components.interfaces;
 const Cr = Components.results;
 const Cu = Components.utils;
 
-const ID_URI = "http://127.0.0.1:10002";
+// TODO: get these from preferences instead of hardcoding.
+const ID_URI = "https://browserid.org/sign_in";
+const TOKEN_URI = "http://token2.reg.mtv1.dev.svc.mozilla.com";
 
-Cu.import("resource://gre/modules/Services.jsm");
+Cu.import("resource://services-sync/util.js");
+Cu.import("resource://services-sync/auth.js");
+Cu.import("resource://gre/modules/Webapps.jsm");
 
+// TODO: get rid of dump()s.
 function AitcSvc() {
+  this._token = null;
+  this._client = null;
   dump("!!! AITC !!! Service initialized\n");
 }
 AitcSvc.prototype = {
+
+  // Obtain a BrowserID assertion (if user is already logged in)
   getAssertion: function _getAssertion(email, audience, cb) {
+
+    /*
     let appShell = Cc["@mozilla.org/appshell/appShellService;1"]
       .getService(Ci.nsIAppShellService);
     let hiddenDOMWindow = appShell.hiddenDOMWindow;
+    let doc = hiddenDOMWindow.document;
+    */
 
-    let frame = hiddenDOMWindow.document.createElement("iframe");
+    // This way of obtaining a window is more fickle than the commented way
+    let wM = Cc["@mozilla.org/appshell/window-mediator;1"]
+      .getService(Ci.nsIWindowMediator);
+    let win = wM.getMostRecentWindow("navigator:browser");
+    let doc = win.document;
+
+    // Insert iframe in to create docshell
+    let frame = doc.createElement("iframe");
     frame.setAttribute("type", "content");
-    frame.setAttribute("src", ID_URI);
+    frame.setAttribute("collapsed", "true");
+    doc.documentElement.appendChild(frame);
 
-    let injectController = function(doc, topic, data) {
-      if (!doc.defaultView || doc.defaultView != frame.contentWindow) {
-        throw "No window found";
-      }
-      Services.obs.removeObserver(injectController, 'document-element-inserted', false);
-      
-      let workerWindow = frame.contentWindow;
-      let sandbox = new Cu.Sandbox(workerWindow, {
-        sandboxPrototype: workerWindow,
-        wantXrays: false
-      });
+    // Stop about:blank from being loaded
+    let webNav = frame.docShell.QueryInterface(Ci.nsIWebNavigation);
+    webNav.stop(Ci.nsIWebNavigation.STOP_NETWORK);
 
-      function successCb(res) {
-        cb(null, res);
-      }
-      function errorCb(err) {
-        cb(err, null);
-      }
-      sandbox.importFunction(successCb, "successCb");
-      sandbox.importFunction(errorCb, "errorCb");
+    let parseHandler = {
+      handleEvent: function (event) {
+        event.target.removeEventListener("DOMContentLoaded", this, false);
 
-      workerWindow.addEventListener("load", function() {
+        let workerWindow = frame.contentWindow;
+        let sandbox = new Cu.Sandbox(workerWindow, {
+          sandboxPrototype: workerWindow,
+          wantXrays: false
+        });
+
+        function successCb(res) {
+          cb(null, res);
+        }
+        function errorCb(err) {
+          cb(err, null);
+        }
+        sandbox.importFunction(successCb, "successCb");
+        sandbox.importFunction(errorCb, "errorCb");
+   
         let scriptText = 
           "window.BrowserID.User.getAssertion('" + email + "', '" + audience +
           "', successCb, errorCb);";
-        Cu.evalInSandbox(scriptText, sandbox, "1.8", workerWindow.location.href, 1);  
-      }, true);
+        Cu.evalInSandbox(scriptText, sandbox, "1.8", workerWindow.location.href, 1);
+      }
     };
 
-    Services.obs.addObserver(injectController, 'document-element-inserted', false);
-    let doc = hiddenDOMWindow.document;
-    let container = doc.body ? doc.body : doc.documentElement;
-    container.appendChild(frame);
+    // Make channel for URI
+    let iOservice = Cc["@mozilla.org/network/io-service;1"]
+      .getService(Ci.nsIIOService);
+    let channel = iOservice.newChannel(ID_URI, null, null);
+
+    // Load the iframe
+    frame.addEventListener("DOMContentLoaded", parseHandler, true);
+    let uriLoader = Cc["@mozilla.org/uriloader;1"].getService(Ci.nsIURILoader);
+    uriLoader.openURI(channel, true, frame.docShell);
+  },
+
+  // Obtain a token from Sagrada token server
+  getToken: function _getToken(assertion, cb) {
+    let url = TOKEN_URI + "/1.0/aitc/1.0";
+    let client = new TokenServerClient();
+
+    // Return long lived token for now (for development only)
+    const ASSERTION = "eyJhbGciOiAiUlMyNTYifQ.eyJpc3MiOiAiYnJvd3NlcmlkLm9yZyIsICJwdWJsaWMta2V5IjogIlx1MDAwMFx1MDAwMFx1MDAwMFx1MDA4MVx1MDAwMFx1MDBjZGUhXHUwMDE1XHUwMGRhaFx1MDBiNWBcdTAwY2VbXHUwMGQ2XHUwMDE3ZFx1MDBiYThcdTAwYzFJXHUwMGIxXHUwMGYxXHUwMGJlclx1MDA4NktcdTAwYzdcdTAwZGFcdTAwYjNcdTAwOThcdTAwZDZcdTAwZjZcdTAwODBcdTAwYWVcdTAwYWFcdTAwOGYhXHUwMDlhXHUwMGVmUVx1MDBkZWhcdTAwYmJcdTAwYzVcdTAwOTlcdTAwMDFvXHUwMGViR09cdTAwOGVcdTAwOWJcdTAwOWFcdTAwMThcdTAwZmI2XHUwMGJhXHUwMDEyXHUwMGZjXHUwMGYyXHUwMDE3XHIkXHUwMDAwXHUwMGExXHUwMDFhIFx1MDBmYy9cdTAwMTNpVW1cdTAwMDRcdTAwMTNcdTAwMGZcdTAwOTFEflx1MDBiZlxiXHUwMDE5Q1x1MDAxYVx1MDBlMlx1MDBhM1x1MDA5MSZcdTAwOGZcdTAwY2ZcdTAwY2NcdTAwZjNcdTAwYTRIUmZcdTAwYWZcdTAwZjJcdTAwMTlcdTAwYmRcdTAwMDVcdTAwZTM2XHUwMDlhXHUwMGJiUVx1MDBjODZ8KFx1MDBhZFx1MDA4M1x1MDBmMkV1XHUwMGIyRUxcdTAwZGZcdTAwYTRAXHUwMDdmXHUwMGVlbHxcdTAwZmNVXHUwMDAzXHUwMGRiXHUwMDg5JyIsICJleHAiOiAxMzYzOTEwNzUwMzYwLCAicHJpbmNpcGFsIjogeyJlbWFpbCI6ICJ0ZXN0QGV4YW1wbGUuY29tIn19.RUQBy2rCtU1HTVqv6ngDIYe0lclVuFGKyQjKe3MA0UXefAP35KYs8nLuLM80m8I5vGBS42mqiq4TZDuNPy-vHZNJYw_qlnTSrsmccIPc3asFWXEw3PPvgLjtL49c60veKdDfkdQMUlMVWLDVNVi3O8spS-RyS1_Wa-XdvaPqIu0~eyJhbGciOiAiUlMyNTYifQ.eyJhdWQiOiAiKiIsICJleHAiOiAxMzYzOTEwNzUwMzYwfQ.ExWSBELUtM6yEyJdfTPu9220R59IhXKkQFtxSty3ZymR5wyVnjryHKLQWLmfEWzUrfl-6EZAjSMhZ_H78fviooFl_swcViN9SLU-m4ti9YOcZFR-htkk233yAtcZ5p1sSFo_Z5kWIzYp_nolPeBq3fgSQG_YEam7erUxGAeY080";
+    let TOKEN = {
+      "api_endpoint": "https://dev-aitc1.services.mozilla.com/1.0/42",
+      "id": "eyJleHBpcmVzIjogMTM2NTAxMDg5OC4xMTk1MDk5LCAic2FsdCI6ICI1YTE3ZDYiLCAidWlkIjogNDJ9L7vI7dWORWRocv_flcwuxr59yxs=",
+      "key": "qTZf4ZFpAMpMoeSsX3zVRjiqmNs=",
+      "uid": 42
+    };
+    cb(TOKEN);
+    return;
+
+    // Token server doesn't support real assertions yet?
+    client.getTokenFromBrowserIDAssertion(url, assertion, function(err, res) {
+      if (!err.response) {
+        dump("!!! AITC !!! Error while fetching token " + err + "\n");
+        return;
+      }
+      if (!err.response.success) {
+        dump("!!! AITC !!! Non-200 while fetching token " + err.response.status + "\n");
+        return;
+      }
+
+      dump("!!! AITC !!! Got token " + res);
+    });
+  },
+
+  ready: function(token) {
+    this._token = token;
+    Svc.Obs.add("webapps-sync-install", this);
+    Svc.Obs.add("webapps-sync-uninstall", this);
+
+    // Until we have a working dashboard, run client every 30 seconds
+    Cu.import("resource://services-aitc/client.js");
+    this._client = new AitcClient(this._token);
+    this._client.runPeriodically();
+  },
+
+  observe: function(aSubject, aTopic, aData) {
+    switch (aTopic) {
+    // TODO: Inform AitcClient about these events, or implement in client.js
+    case "webapps-sync-install":
+      dump("!!! AITC !!! app " + aData + " was installed\n");
+      break;
+    case "webapps-sync-uninstall":
+      dump("!!! AITC !!! app " + aData + " was uninstalled\n");
+      break;
+    }
   }
 };
 
 let Aitc = new AitcSvc();
 Aitc.getAssertion('anant@kix.in', 'http://google.com', function(err, res) {
-  if (err) dump("!!! AITC !!! ERROR: " + err + "\n");
-  else dump("!!! AITC !!! Got assertion: " + res + "\n");
+  if (err) {
+    dump("!!! AITC !!! ERROR: " + err + "\n");
+  } else {
+    dump("!!! AITC !!! Got assertion: " + res + "\n");
+    Aitc.getToken(res, function(token) {
+      Aitc.ready(token);
+    });
+  }
 });

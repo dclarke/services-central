@@ -60,6 +60,7 @@ const LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S";
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://services-sync/record.js");
+Cu.import("resource://services-sync/client.js");
 Cu.import("resource://services-sync/constants.js");
 Cu.import("resource://services-sync/engines.js");
 Cu.import("resource://services-sync/engines/clients.js");
@@ -93,8 +94,8 @@ WeaveSvc.prototype = {
   _loggedIn: false,
   _identity: Weave.Identity,
 
-  userBaseURL: null,
-  infoURL: null,
+  baseURL: null,
+  _client: null,
   storageURL: null,
   metaURL: null,
   cryptoKeyURL: null,
@@ -177,17 +178,20 @@ WeaveSvc.prototype = {
   },
 
   _updateCachedURLs: function _updateCachedURLs() {
+    // TODO this method should disappear once client is used for everything.
+
     // Nothing to cache yet if we don't have the building blocks
     if (this.clusterURL == "" || this._identity.username == "")
       return;
 
-    let storageAPI = this.clusterURL + SYNC_API_VERSION + "/";
-    this.userBaseURL = storageAPI + this._identity.username + "/";
-    this._log.debug("Caching URLs under storage user base: " + this.userBaseURL);
+    this.baseURL = this.clusterURL + SYNC_API_VERSION + "/";
+
+    this._client = new SyncClient(this.baseURL, this);
+
+    this._log.debug("Caching URLs under base: " + this.baseURL);
 
     // Generate and cache various URLs under the storage API for this user
-    this.infoURL = this.userBaseURL + "info/collections";
-    this.storageURL = this.userBaseURL + "storage/";
+    this.storageURL = this.baseURL + "storage/";
     this.metaURL = this.storageURL + "meta/global";
     this.cryptoKeysURL = this.storageURL + CRYPTO_COLLECTION + "/" + KEYS_WBO;
   },
@@ -507,7 +511,7 @@ WeaveSvc.prototype = {
     if (cluster == this.clusterURL)
       return false;
 
-    this._log.debug("Setting cluster to " + cluster);
+    this._log.debug("Setting cluster to " + cluster + "; old: " + this.clusterURL);
     this.clusterURL = cluster;
     Svc.Prefs.set("lastClusterUpdate", Date.now().toString());
     return true;
@@ -525,28 +529,7 @@ WeaveSvc.prototype = {
     return false;
   },
 
-  /**
-   * Perform the info fetch as part of a login or key fetch.
-   */
-  _fetchInfo: function _fetchInfo(url) {
-    let infoURL = url || this.infoURL;
-
-    this._log.trace("In _fetchInfo: " + infoURL);
-    let info;
-    try {
-      info = new Resource(infoURL).get();
-    } catch (ex) {
-      ErrorHandler.checkServerError(ex);
-      throw ex;
-    }
-    if (!info.success) {
-      ErrorHandler.checkServerError(info);
-      throw "aborting sync, failed to get collections";
-    }
-    return info;
-  },
-
-  verifyAndFetchSymmetricKeys: function verifyAndFetchSymmetricKeys(infoResponse) {
+  verifyAndFetchSymmetricKeys: function verifyAndFetchSymmetricKeys(infoRequest) {
 
     this._log.debug("Fetching and verifying -- or generating -- symmetric keys.");
 
@@ -571,22 +554,26 @@ WeaveSvc.prototype = {
     }
 
     try {
-      if (!infoResponse)
-        infoResponse = this._fetchInfo();    // Will throw an exception on failure.
+      if (!infoRequest) {
+        infoRequest = this._client.getCollectionInfo();
+      }
 
-      // This only applies when the server is already at version 4.
-      if (infoResponse.status != 200) {
-        this._log.warn("info/collections returned non-200 response. Failing key fetch.");
+      // TODO use a proper API, not RESTRequest's status.
+      if (infoRequest.request.status == 0) {
+        infoRequest.dispatchSynchronous();
+      }
+
+      if (!infoRequest.success) {
+        this._log.warn("Collections info request failed: " + infoRequest.error);
         Status.login = LOGIN_FAILED_SERVER_ERROR;
-        ErrorHandler.checkServerError(infoResponse);
         return false;
       }
 
-      let infoCollections = infoResponse.obj;
+      let collectionInfo = infoRequest.resultObj;
 
-      this._log.info("Testing info/collections: " + JSON.stringify(infoCollections));
+      this._log.info("Testing info/collections: " + JSON.stringify(collectionInfo));
 
-      if (CollectionKeys.updateNeeded(infoCollections)) {
+      if (CollectionKeys.updateNeeded(collectionInfo)) {
         this._log.info("CollectionKeys reports that a key update is needed.");
 
         // Don't always set to CREDENTIALS_CHANGED -- we will probably take care of this.
@@ -594,7 +581,7 @@ WeaveSvc.prototype = {
         // Fetch storage/crypto/keys.
         let cryptoKeys;
 
-        if (infoCollections && (CRYPTO_COLLECTION in infoCollections)) {
+        if (collectionInfo && (CRYPTO_COLLECTION in collectionInfo)) {
           try {
             cryptoKeys = new CryptoWrapper(CRYPTO_COLLECTION, KEYS_WBO);
             let cryptoResp = cryptoKeys.fetch(this.cryptoKeysURL).response;
@@ -666,6 +653,15 @@ WeaveSvc.prototype = {
     }
   },
 
+  /**
+   * Ensure we are able to log in to the server.
+   *
+   * This verifies that the client has the necessary credentials to communicate
+   * with the Sync server and that those credentials work.
+   *
+   * @return bool
+   *         Whether we have working credentials.
+   */
   verifyLogin: function verifyLogin()
     this._notify("verify-login", "", function() {
       if (!this._identity.username) {
@@ -698,56 +694,71 @@ WeaveSvc.prototype = {
           return true;
         }
 
-        // Fetch collection info on every startup.
-        let test = new Resource(this.infoURL).get();
+        // Jump through hoops to ensure logic is executed from this tick. If
+        // not, there could be race conditions. This can all go away once a
+        // proper state machine is deployed.
+        let cb = Async.makeSyncCallback();
+        let valid, info;
+        this._client.validateCredentials(function(v, i) {
+          valid = v;
+          info = i;
+          cb();
+        });
+        Async.waitForSyncCallback(cb);
 
-        switch (test.status) {
-          case 200:
-            // The user is authenticated.
+        // This logic is needlessly complicated for historical reasons. We
+        // might be able to simplify, but it would require a lot of unit test
+        // work and testing.
+        if (valid) {
+          this._log.info("Credentials validated with server.");
 
-            // We have no way of verifying the passphrase right now,
-            // so wait until remoteSetup to do so.
-            // Just make the most trivial checks.
-            if (!this._identity.syncKey) {
-              this._log.warn("No passphrase in verifyLogin.");
-              Status.login = LOGIN_FAILED_NO_PASSPHRASE;
-              return false;
-            }
+          if (!this._identity.syncKey) {
+            this._log.warn("No sync key present.");
+            Status.login = LOGIN_FAILED_NO_PASSPHRASE;
+            return false;
+          }
 
-            // Go ahead and do remote setup, so that we can determine
-            // conclusively that our passphrase is correct.
-            if (this._remoteSetup()) {
-              // Username/password verified.
-              Status.login = LOGIN_SUCCEEDED;
-              return true;
-            }
-
+          if (!this._remoteSetup()) {
             this._log.warn("Remote setup failed.");
-            // Remote setup must have failed.
             return false;
+          }
 
-          case 401:
-            this._log.warn("401: login failed.");
-            // Fall through to the 404 case.
-
-          case 404:
-            // Check that we're verifying with the correct cluster
-            if (this._setCluster())
-              return this.verifyLogin();
-
-            // We must have the right cluster, but the server doesn't expect us
-            Status.login = LOGIN_FAILED_LOGIN_REJECTED;
-            return false;
-
-          default:
-            // Server didn't respond with something that we expected
-            Status.login = LOGIN_FAILED_SERVER_ERROR;
-            ErrorHandler.checkServerError(test);
-            return false;
+          Status.login = LOGIN_SUCCEEDED;
+          return true;
         }
-      }
-      catch (ex) {
-        // Must have failed on some network issue
+
+        // Credentials didn't validate. It could be a network, server, or other
+        // error.
+        if (info.networkError) {
+          Status.login = LOGIN_FAILED_NETWORK_ERROR;
+          return false;
+        }
+
+        // For auth failures, we could be hitting the wrong cluster. Ensure we
+        // are on the right cluster. If not, try again with the right one. If
+        // so, error.
+        if (info.authFailure) {
+          if (this._setCluster()) {
+            return this.verifyLogin();
+          }
+
+          Status.login = LOGIN_FAILED_LOGIN_REJECTED;
+          return false;
+        }
+
+        if (info.serverMaintenance) {
+          Status.enforceBackoff = true;
+          Status.login = SERVER_MAINTENANCE;
+          return false;
+        }
+
+        // It must have been a general server failure.
+        Status.enforceBackoff = true;
+        Status.login = LOGIN_FAILED_SERVER_ERROR;
+        return false;
+      } catch (ex) {
+        // This should only get triggered in calls to _setCluster. We should
+        // foramlize that API and remove this hackery.
         this._log.debug("verifyLogin failed: " + Utils.exceptionStr(ex));
         Status.login = LOGIN_FAILED_NETWORK_ERROR;
         ErrorHandler.checkServerError(ex);
@@ -764,26 +775,26 @@ WeaveSvc.prototype = {
 
     this._log.info("Uploading...");
     let uploadRes = wbo.upload(this.cryptoKeysURL);
-    if (uploadRes.status != 200) {
+    if (uploadRes.status != 204) {
       this._log.warn("Got status " + uploadRes.status + " uploading new keys. What to do? Throw!");
       ErrorHandler.checkServerError(uploadRes);
       throw new Error("Unable to upload symmetric keys.");
     }
     this._log.info("Got status " + uploadRes.status + " uploading keys.");
-    let serverModified = uploadRes.obj;   // Modified timestamp according to server.
+    let serverModified = uploadRes.serverTime;
     this._log.debug("Server reports crypto modified: " + serverModified);
 
     // Now verify that info/collections shows them!
     this._log.debug("Verifying server collection records.");
-    let info = this._fetchInfo();
-    this._log.debug("info/collections is: " + info);
+    let infoRequest = this._client.getCollectionInfo();
+    infoRequest.dispatchSynchronous();
 
-    if (info.status != 200) {
-      this._log.warn("Non-200 info/collections response. Aborting.");
-      throw new Error("Unable to upload symmetric keys.");
+    if (!infoRequest.success) {
+      this._log.warn("Collections info request failed. Aborting.");
+      throw infoRequest.error;
     }
 
-    info = info.obj;
+    let info = infoRequest.resultObj;
     if (!(CRYPTO_COLLECTION in info)) {
       this._log.error("Consistency failure: info/collections excludes " + 
                       "crypto after successful upload.");
@@ -1022,21 +1033,21 @@ WeaveSvc.prototype = {
 
   // Stuff we need to do after login, before we can really do
   // anything (e.g. key setup).
-  _remoteSetup: function WeaveSvc__remoteSetup(infoResponse) {
+  _remoteSetup: function WeaveSvc__remoteSetup(infoRequest) {
     let reset = false;
 
     this._log.debug("Fetching global metadata record");
     let meta = Records.get(this.metaURL);
 
     // Checking modified time of the meta record.
-    if (infoResponse &&
-        (infoResponse.obj.meta != this.metaModified) &&
+    if (infoRequest && infoRequest.success &&
+        (infoRequest.resultObj.meta != this.metaModified) &&
         (!meta || !meta.isNew)) {
 
       // Delete the cached meta record...
       this._log.debug("Clearing cached meta record. metaModified is " +
           JSON.stringify(this.metaModified) + ", setting to " +
-          JSON.stringify(infoResponse.obj.meta));
+          JSON.stringify(infoRequest.resultObj.meta));
 
       Records.del(this.metaURL);
 
@@ -1064,7 +1075,7 @@ WeaveSvc.prototype = {
 
       // Switch in the new meta object and record the new time.
       meta              = newMeta;
-      this.metaModified = infoResponse.obj.meta;
+      this.metaModified = infoRequest.resultObj.meta;
     }
 
     let remoteVersion = (meta && meta.payload.storageVersion)?
@@ -1126,7 +1137,7 @@ WeaveSvc.prototype = {
         return false;
       }
 
-      if (!this.verifyAndFetchSymmetricKeys(infoResponse)) {
+      if (!this.verifyAndFetchSymmetricKeys(infoRequest)) {
         this._log.warn("Failed to fetch symmetric keys. Failing remote setup.");
         return false;
       }
@@ -1146,7 +1157,7 @@ WeaveSvc.prototype = {
         return false;
       }
 
-      if (!this.verifyAndFetchSymmetricKeys(infoResponse)) {
+      if (!this.verifyAndFetchSymmetricKeys(infoRequest)) {
         this._log.warn("Failed to fetch symmetric keys. Failing remote setup.");
         return false;
       }
@@ -1247,23 +1258,21 @@ WeaveSvc.prototype = {
       return;
     }
 
-    // Ping the server with a special info request once a day.
-    let infoURL = this.infoURL;
-    let now = Math.floor(Date.now() / 1000);
-    let lastPing = Svc.Prefs.get("lastPing", 0);
-    if (now - lastPing > 86400) { // 60 * 60 * 24
-      infoURL += "?v=" + WEAVE_VERSION;
-      Svc.Prefs.set("lastPing", now);
+    // Figure out what the last modified time is for each collection
+    let request = this._client.getCollectionInfo();
+    request.dispatchSynchronous();
+
+    if (!request.success) {
+      throw "Aborting sync. Failed to get collections.";
     }
 
-    // Figure out what the last modified time is for each collection
-    let info = this._fetchInfo(infoURL);
+    let info = request.resultObj;
 
     // Convert the response to an object and read out the modified times
     for each (let engine in [Clients].concat(Engines.getAll()))
-      engine.lastModified = info.obj[engine.name] || 0;
+      engine.lastModified = info[engine.name] || 0;
 
-    if (!(this._remoteSetup(info)))
+    if (!(this._remoteSetup(request)))
       throw "aborting sync, remote setup failed";
 
     // Make sure we have an up-to-date list of clients before sending commands
@@ -1296,7 +1305,7 @@ WeaveSvc.prototype = {
         }
 
         // Repeat remoteSetup in-case the commands forced us to reset
-        if (!(this._remoteSetup(info)))
+        if (!(this._remoteSetup(request)))
           throw "aborting sync, remote setup failed after processing commands";
       }
       finally {
@@ -1540,7 +1549,6 @@ WeaveSvc.prototype = {
       if (!collections) {
         // Strip the trailing slash.
         let res = new Resource(this.storageURL.slice(0, -1));
-        res.setHeader("X-Confirm-Delete", "1");
         try {
           response = res.delete();
         } catch (ex) {
@@ -1552,7 +1560,7 @@ WeaveSvc.prototype = {
                           response.status + " response for " + this.storageURL);
           throw response;
         }
-        return response.headers["x-weave-timestamp"];
+        return response.headers["x-timestamp"];
       }
       let timestamp;
       for each (let name in collections) {
@@ -1569,8 +1577,8 @@ WeaveSvc.prototype = {
                           response.status + " response for " + url);
           throw response;
         }
-        if ("x-weave-timestamp" in response.headers) {
-          timestamp = response.headers["x-weave-timestamp"];
+        if ("x-timestamp" in response.headers) {
+          timestamp = response.headers["x-timestamp"];
         }
       }
       return timestamp;
@@ -1692,7 +1700,7 @@ WeaveSvc.prototype = {
 
     let info_type = "info/" + type;
     this._log.trace("Retrieving '" + info_type + "'...");
-    let url = this.userBaseURL + info_type;
+    let url = this.baseURL + info_type;
     return new SyncStorageRequest(url).get(function onComplete(error) {
       // Note: 'this' is the request.
       if (error) {
