@@ -75,7 +75,7 @@ AuthRESTRequest.prototype = {
 };
 
 function AitcClient(token, registry) {
-  this.uri = token.api_endpoint.replace(/\/+$/, '');
+  this.uri = token.endpoint.replace(/\/+$/, '');
   dump('!!! AITC !!! token endpoint: ' + this.uri + '\n');
   this.token = token;
   this.registry = registry || DOMApplicationRegistry;

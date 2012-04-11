@@ -43,10 +43,11 @@ const Cu = Components.utils;
 
 // TODO: get these from preferences instead of hardcoding.
 const ID_URI = "https://browserid.org/sign_in";
+// Switch to https://dev-token.services.mozilla.com when it is safe
 const TOKEN_URI = "http://token2.reg.mtv1.dev.svc.mozilla.com";
 
 Cu.import("resource://services-sync/util.js");
-Cu.import("resource://services-sync/auth.js");
+Cu.import("resource://services-common/tokenserverclient.js");
 Cu.import("resource://gre/modules/Webapps.jsm");
 
 // TODO: get rid of dump()s.
@@ -125,7 +126,7 @@ AitcSvc.prototype = {
     let url = TOKEN_URI + "/1.0/aitc/1.0";
     let client = new TokenServerClient();
 
-    // Return long lived token for now (for development only)
+    /*
     const ASSERTION = "eyJhbGciOiAiUlMyNTYifQ.eyJpc3MiOiAiYnJvd3NlcmlkLm9yZyIsICJwdWJsaWMta2V5IjogIlx1MDAwMFx1MDAwMFx1MDAwMFx1MDA4MVx1MDAwMFx1MDBjZGUhXHUwMDE1XHUwMGRhaFx1MDBiNWBcdTAwY2VbXHUwMGQ2XHUwMDE3ZFx1MDBiYThcdTAwYzFJXHUwMGIxXHUwMGYxXHUwMGJlclx1MDA4NktcdTAwYzdcdTAwZGFcdTAwYjNcdTAwOThcdTAwZDZcdTAwZjZcdTAwODBcdTAwYWVcdTAwYWFcdTAwOGYhXHUwMDlhXHUwMGVmUVx1MDBkZWhcdTAwYmJcdTAwYzVcdTAwOTlcdTAwMDFvXHUwMGViR09cdTAwOGVcdTAwOWJcdTAwOWFcdTAwMThcdTAwZmI2XHUwMGJhXHUwMDEyXHUwMGZjXHUwMGYyXHUwMDE3XHIkXHUwMDAwXHUwMGExXHUwMDFhIFx1MDBmYy9cdTAwMTNpVW1cdTAwMDRcdTAwMTNcdTAwMGZcdTAwOTFEflx1MDBiZlxiXHUwMDE5Q1x1MDAxYVx1MDBlMlx1MDBhM1x1MDA5MSZcdTAwOGZcdTAwY2ZcdTAwY2NcdTAwZjNcdTAwYTRIUmZcdTAwYWZcdTAwZjJcdTAwMTlcdTAwYmRcdTAwMDVcdTAwZTM2XHUwMDlhXHUwMGJiUVx1MDBjODZ8KFx1MDBhZFx1MDA4M1x1MDBmMkV1XHUwMGIyRUxcdTAwZGZcdTAwYTRAXHUwMDdmXHUwMGVlbHxcdTAwZmNVXHUwMDAzXHUwMGRiXHUwMDg5JyIsICJleHAiOiAxMzYzOTEwNzUwMzYwLCAicHJpbmNpcGFsIjogeyJlbWFpbCI6ICJ0ZXN0QGV4YW1wbGUuY29tIn19.RUQBy2rCtU1HTVqv6ngDIYe0lclVuFGKyQjKe3MA0UXefAP35KYs8nLuLM80m8I5vGBS42mqiq4TZDuNPy-vHZNJYw_qlnTSrsmccIPc3asFWXEw3PPvgLjtL49c60veKdDfkdQMUlMVWLDVNVi3O8spS-RyS1_Wa-XdvaPqIu0~eyJhbGciOiAiUlMyNTYifQ.eyJhdWQiOiAiKiIsICJleHAiOiAxMzYzOTEwNzUwMzYwfQ.ExWSBELUtM6yEyJdfTPu9220R59IhXKkQFtxSty3ZymR5wyVnjryHKLQWLmfEWzUrfl-6EZAjSMhZ_H78fviooFl_swcViN9SLU-m4ti9YOcZFR-htkk233yAtcZ5p1sSFo_Z5kWIzYp_nolPeBq3fgSQG_YEam7erUxGAeY080";
     let TOKEN = {
       "api_endpoint": "https://dev-aitc1.services.mozilla.com/1.0/42",
@@ -135,19 +136,22 @@ AitcSvc.prototype = {
     };
     cb(TOKEN);
     return;
-
-    // Token server doesn't support real assertions yet?
-    client.getTokenFromBrowserIDAssertion(url, assertion, function(err, res) {
-      if (!err.response) {
-        dump("!!! AITC !!! Error while fetching token " + err + "\n");
-        return;
+    */
+    client.getTokenFromBrowserIDAssertion(url, assertion, function(err, tok) {
+      if (!err) {
+        dump("!!! AITC !!! Got token " + JSON.stringify(tok) + "\n");
+        cb(tok);
+      } else {
+        if (!err.response) {
+          dump("!!! AITC !!! Error while fetching token " + err + "\n");
+          return;
+        }
+        if (!err.response.success) {
+          dump("!!! AITC !!! Non-200 while fetching token " + err.response.status + " :: " + err.response.body + "\n");
+          return;
+        }
+        dump("!!! AITC !!! Got error " + err + "\n");
       }
-      if (!err.response.success) {
-        dump("!!! AITC !!! Non-200 while fetching token " + err.response.status + "\n");
-        return;
-      }
-
-      dump("!!! AITC !!! Got token " + res);
     });
   },
 
@@ -176,7 +180,7 @@ AitcSvc.prototype = {
 };
 
 let Aitc = new AitcSvc();
-Aitc.getAssertion('anant@kix.in', 'http://google.com', function(err, res) {
+Aitc.getAssertion('anant@kix.in', 'https://myapps.mozillalabs.com', function(err, res) {
   if (err) {
     dump("!!! AITC !!! ERROR: " + err + "\n");
   } else {
