@@ -4,15 +4,13 @@ const TEST_CLUSTER_URL = "http://localhost:8080/";
 const TEST_SERVER_URL  = "http://localhost:8080/";
 
 // Shared logging for all HTTP server functions.
-Cu.import("resource://services-sync/log4moz.js");
+Cu.import("resource://services-common/log4moz.js");
 const SYNC_HTTP_LOGGER = "Sync.Test.Server";
-const SYNC_API_VERSION = "1.1";
+const SYNC_API_VERSION = "2.0";
 
 // Use the same method that record.js does, which mirrors the server.
-// The server returns timestamps with 1/100 sec granularity. Note that this is
-// subject to change: see Bug 650435.
 function new_timestamp() {
-  return Math.round(Date.now() / 10) / 100;
+  return Math.round(Date.now());
 }
 
 function return_timestamp(request, response, timestamp) {
@@ -20,43 +18,10 @@ function return_timestamp(request, response, timestamp) {
     timestamp = new_timestamp();
   }
   let body = "" + timestamp;
-  response.setHeader("X-Weave-Timestamp", body);
+  response.setHeader("X-Timestamp", body);
   response.setStatusLine(request.httpVersion, 200, "OK");
   response.bodyOutputStream.write(body, body.length);
   return timestamp;
-}
-
-function httpd_setup (handlers, port) {
-  let port   = port || 8080;
-  let server = new nsHttpServer();
-  for (let path in handlers) {
-    server.registerPathHandler(path, handlers[path]);
-  }
-  try {
-    server.start(port);
-  } catch (ex) {
-    _("==========================================");
-    _("Got exception starting HTTP server on port " + port);
-    _("Error: " + Utils.exceptionStr(ex));
-    _("Is there a process already listening on port " + port + "?");
-    _("==========================================");
-    do_throw(ex);
-  }
-
-  return server;
-}
-
-function httpd_handler(statusCode, status, body) {
-  return function handler(request, response) {
-    // Allow test functions to inspect the request.
-    request.body = readBytesFromInputStream(request.bodyInputStream);
-    handler.request = request;
-
-    response.setStatusLine(request.httpVersion, statusCode, status);
-    if (body) {
-      response.bodyOutputStream.write(body, body.length);
-    }
-  };
 }
 
 function basic_auth_header(user, password) {
@@ -85,21 +50,6 @@ function httpd_basic_auth_handler(body, metadata, response) {
 }
 
 /*
- * Read bytes string from an nsIInputStream.  If 'count' is omitted,
- * all available input is read.
- */
-function readBytesFromInputStream(inputStream, count) {
-  var BinaryInputStream = Components.Constructor(
-      "@mozilla.org/binaryinputstream;1",
-      "nsIBinaryInputStream",
-      "setInputStream");
-  if (!count) {
-    count = inputStream.available();
-  }
-  return new BinaryInputStream(inputStream).readBytes(count);
-}
-
-/*
  * Represent a WBO on the server
  */
 function ServerWBO(id, initialPayload, modified) {
@@ -110,6 +60,8 @@ function ServerWBO(id, initialPayload, modified) {
   if (!initialPayload) {
     return;
   }
+
+  Utils.ensureMillisecondsTimestamp(modified);
 
   if (typeof initialPayload == "object") {
     initialPayload = JSON.stringify(initialPayload);
@@ -162,8 +114,8 @@ ServerWBO.prototype = {
 
         case "PUT":
           self.put(readBytesFromInputStream(request.bodyInputStream));
-          body = JSON.stringify(self.modified);
-          response.setHeader("Content-Type", "application/json");
+          statusCode = 204;
+          body = "";
           response.newModified = self.modified;
           break;
 
@@ -175,7 +127,7 @@ ServerWBO.prototype = {
           response.newModified = ts;
           break;
       }
-      response.setHeader("X-Weave-Timestamp", "" + new_timestamp(), false);
+      response.setHeader("X-Timestamp", "" + new_timestamp(), false);
       response.setStatusLine(request.httpVersion, statusCode, status);
       response.bodyOutputStream.write(body, body.length);
     };
@@ -213,10 +165,22 @@ function ServerCollection(wbos, acceptNew, timestamp) {
    * We can't just use the timestamps of contained WBOs: an empty collection
    * has a modified time.
    */
+   Utils.ensureMillisecondsTimestamp(timestamp);
+
   this.timestamp = timestamp || new_timestamp();
   this._log = Log4Moz.repository.getLogger(SYNC_HTTP_LOGGER);
 }
 ServerCollection.prototype = {
+  _timestamp: null,
+
+  get timestamp() {
+    return this._timestamp;
+  },
+
+  set timestamp(timestamp) {
+    Utils.ensureMillisecondsTimestamp(timestamp);
+    this._timestamp = timestamp;
+  },
 
   /**
    * Convenience accessor for our WBO keys.
@@ -376,12 +340,21 @@ ServerCollection.prototype = {
         failed[record.id] = "no wbo configured";
       }
     }
-    return {modified: new_timestamp(),
-            success: success,
-            failed: failed};
+    return {success: success, failed: failed};
   },
 
   delete: function(options) {
+    if (!options) {
+      options = {};
+    }
+    // Protocol 2.0 only allows the "ids" query string argument.
+    let keys = Object.keys(options).filter(function(k) { return k != "ids"; });
+    if (keys.length) {
+      this._log.warn("Invalid query string parameter to collection delete: " +
+                     keys.join(", "));
+      throw new Error("Malformed client request.");
+    }
+
     let deleted = [];
     for (let [id, wbo] in Iterator(this._wbos)) {
       if (this._inResultSet(wbo, options)) {
@@ -420,7 +393,12 @@ ServerCollection.prototype = {
         options.ids = options.ids.split(",");
       }
       if (options.newer) {
-        options.newer = parseFloat(options.newer);
+        try {
+          Utils.ensureMillisecondsTimestamp(options.newer);
+        } catch (ex) {
+          do_check_false(ex);
+        }
+        options.newer = parseInt(options.newer, 10);
       }
       if (options.limit) {
         options.limit = parseInt(options.limit, 10);
@@ -435,7 +413,7 @@ ServerCollection.prototype = {
           let records = options.recordCount;
           self._log.info("Records: " + records);
           if (records != null) {
-            response.setHeader("X-Weave-Records", "" + records);
+            response.setHeader("X-Num-Records", "" + records);
           }
           break;
 
@@ -448,15 +426,14 @@ ServerCollection.prototype = {
         case "DELETE":
           self._log.debug("Invoking ServerCollection.DELETE.");
           let deleted = self.delete(options);
-          let ts = new_timestamp();
-          body = JSON.stringify(ts);
-          response.newModified = ts;
+          statusCode = 204;
+          status = "No Content";
+          body = "";
+          response.newModified = new_timestamp();
           response.deleted = deleted;
           break;
       }
-      response.setHeader("X-Weave-Timestamp",
-                         "" + new_timestamp(),
-                         false);
+      response.setHeader("X-Timestamp", "" + new_timestamp(), false);
       response.setStatusLine(request.httpVersion, statusCode, status);
       response.bodyOutputStream.write(body, body.length);
 
@@ -476,7 +453,7 @@ ServerCollection.prototype = {
  * Test setup helpers.
  */
 function sync_httpd_setup(handlers) {
-  handlers["/1.1/foo/storage/meta/global"]
+  handlers["/2.0/storage/meta/global"]
       = (new ServerWBO("global", {})).handler();
   return httpd_setup(handlers);
 }
@@ -528,15 +505,12 @@ function track_collections_helper() {
       default:
         throw "Non-GET on info_collections.";
     }
-
+    response.setHeader("X-Timestamp", "" + new_timestamp(), false);
     response.setHeader("Content-Type", "application/json");
-    response.setHeader("X-Weave-Timestamp",
-                       "" + new_timestamp(),
-                       false);
     response.setStatusLine(request.httpVersion, 200, "OK");
     response.bodyOutputStream.write(body, body.length);
   }
-  
+
   return {"collections": collections,
           "handler": info_collections,
           "with_updated_collection": with_updated_collection,
@@ -622,6 +596,19 @@ SyncServer.prototype = {
       _("==========================================");
       do_throw(ex);
     }
+  },
+
+  /**
+   * Start the server synchronously.
+   *
+   * @param port
+   *        The numeric port on which to start. A falsy value implies the
+   *        default (8080).
+   */
+  startSynchronous: function startSynchronous(port) {
+    let cb = Async.makeSpinningCallback();
+    this.start(port, cb);
+    cb.wait();
   },
 
   /**
@@ -789,7 +776,7 @@ SyncServer.prototype = {
   /*
    * Regular expressions for splitting up Sync request paths.
    * Sync URLs are of the form:
-   *   /$apipath/$version/$user/$further
+   *   /$apipath/$version/$further
    * where $further is usually:
    *   storage/$collection/$wbo
    * or
@@ -802,10 +789,10 @@ SyncServer.prototype = {
    * can tell there isn't one. See Bug 689671. Instead we follow the Python
    * server code.
    *
-   * Path: [all, version, username, first, rest]
+   * Path: [all, version, first, rest]
    * Storage: [all, collection?, id?]
    */
-  pathRE: /^\/([0-9]+(?:\.[0-9]+)?)\/([-._a-zA-Z0-9]+)(?:\/([^\/]+)(?:\/(.+))?)?$/,
+  pathRE: /^\/([0-9]+(?:\.[0-9]+)?)(?:\/([^\/]+)(?:\/(.+))?)?$/,
   storageRE: /^([-_a-zA-Z0-9]+)(?:\/([-_a-zA-Z0-9]+)\/?)?$/,
 
   defaultHeaders: {},
@@ -818,7 +805,7 @@ SyncServer.prototype = {
     for each (let [header, value] in Iterator(headers || this.defaultHeaders)) {
       resp.setHeader(header, value);
     }
-    resp.setHeader("X-Weave-Timestamp", "" + this.timestamp(), false);
+    resp.setHeader("X-Timestamp", "" + this.timestamp(), false);
     resp.bodyOutputStream.write(body, body.length);
   },
 
@@ -827,8 +814,6 @@ SyncServer.prototype = {
    * `handler` is the nsHttpServer's handler.
    *
    * TODO: need to use the correct Sync API response codes and errors here.
-   * TODO: Basic Auth.
-   * TODO: check username in path against username in BasicAuth. 
    */
   handleDefault: function handleDefault(handler, req, resp) {
     try {
@@ -855,15 +840,55 @@ SyncServer.prototype = {
       throw HTTP_404;
     }
 
-    let [all, version, username, first, rest] = parts;
+    let [all, version, first, rest] = parts;
     if (version != SYNC_API_VERSION) {
       this._log.debug("SyncServer: Unknown version.");
       throw HTTP_404;
     }
 
-    if (!this.userExists(username)) {
-      this._log.debug("SyncServer: Unknown user.");
+    // All URIs require HTTP auth.
+    if (!req.hasHeader("authorization")) {
+      this.respond(req, resp, 401, "Authorization Required", "{}", {
+        "WWW-Authenticate": 'Basic realm="secret"'
+      });
+      return;
+    }
+
+    let ensureUserExists = function ensureUserExists(username) {
+      if (this.userExists(username)) {
+        return;
+      }
+
+      this._log.debug("SyncServer: Unknown user: " + username);
       throw HTTP_401;
+    }.bind(this);
+
+    let username;
+
+    // TODO 2.0 obtain username from BID
+    let auth = req.getHeader("authorization");
+    this._log.debug("Authorization: " + auth);
+    if (auth.indexOf("Basic ") == 0) {
+      let decoded = Utils.safeAtoB(auth.substr(6));
+      this._log.debug("Decoded Basic Auth: " + decoded);
+      let [user, password] = decoded.split(":", 2);
+
+      if (!password) {
+        this._log.debug("Malformed HTTP Basic Authorization header: " + auth);
+        throw HTTP_400;
+      }
+
+      this._log.debug("Got HTTP Basic auth for user: " + user);
+      ensureUserExists(user);
+      username = user;
+
+      if (this.users[user].password != password) {
+        this._log.debug("SyncServer: Provided password is not correct.");
+        throw HTTP_401;
+      }
+    } else {
+      this._log.debug("Unsupported HTTP authorization type: " + auth);
+      throw HTTP_500;
     }
 
     // Hand off to the appropriate handler for this path component.
@@ -1043,52 +1068,4 @@ function serverForUsers(users, contents, callback) {
   }
   server.start();
   return server;
-}
-
-/**
- * Proxy auth helpers.
- */
-
-/**
- * Fake a PAC to prompt a channel replacement.
- */
-let PACSystemSettings = {
-  CID: Components.ID("{5645d2c1-d6d8-4091-b117-fe7ee4027db7}"),
-  contractID: "@mozilla.org/system-proxy-settings;1",
-
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIFactory,
-                                         Ci.nsISystemProxySettings]),
-
-  createInstance: function createInstance(outer, iid) {
-    if (outer) {
-      throw Cr.NS_ERROR_NO_AGGREGATION;
-    }
-    return this.QueryInterface(iid);
-  },
-
-  lockFactory: function lockFactory(lock) {
-    throw Cr.NS_ERROR_NOT_IMPLEMENTED;
-  },
-  
-  // Replace this URI for each test to avoid caching. We want to ensure that
-  // each test gets a completely fresh setup.
-  PACURI: null,
-  getProxyForURI: function getProxyForURI(aURI) {
-    throw Cr.NS_ERROR_NOT_IMPLEMENTED;
-  }
-};
-
-function installFakePAC() {
-  _("Installing fake PAC.");
-  Cm.nsIComponentRegistrar
-    .registerFactory(PACSystemSettings.CID,
-                     "Fake system proxy-settings",
-                     PACSystemSettings.contractID,
-                     PACSystemSettings);
-}
-
-function uninstallFakePAC() {
-  _("Uninstalling fake PAC.");
-  let CID = PACSystemSettings.CID;
-  Cm.nsIComponentRegistrar.unregisterFactory(CID, PACSystemSettings);
 }

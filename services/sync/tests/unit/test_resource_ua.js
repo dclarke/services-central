@@ -2,7 +2,7 @@ Cu.import("resource://services-sync/constants.js");
 Cu.import("resource://services-sync/resource.js");
 Cu.import("resource://services-sync/service.js");
 
-const TEST_GET_URL = "http://localhost:8080/1.1/johndoe/storage/meta/global";
+const TEST_GET_URL = "http://localhost:8080/2.0/storage/meta/global";
 
 function test_resource_user_agent() {
   let meta_global = new ServerWBO('global');
@@ -21,8 +21,8 @@ function test_resource_user_agent() {
 
   do_test_pending();
   let server = httpd_setup({
-    "/1.1/johndoe/info/collections": uaHandler(collectionsHelper.handler),
-    "/1.1/johndoe/storage/meta/global": uaHandler(meta_global.handler()),
+    "/2.0/info/collections": uaHandler(collectionsHelper.handler),
+    "/2.0/storage/meta/global": uaHandler(meta_global.handler()),
   });
 
   setBasicCredentials("johndoe", "ilovejane");
@@ -32,15 +32,6 @@ function test_resource_user_agent() {
   let expectedUA = Services.appinfo.name + "/" + Services.appinfo.version +
                    " FxSync/" + WEAVE_VERSION + "." +
                    Services.appinfo.appBuildID;
-
-  function test_fetchInfo(next) {
-    _("Testing _fetchInfo.");
-    Weave.Service._fetchInfo();
-    _("User-Agent: " + ua);
-    do_check_eq(ua, expectedUA + ".desktop");
-    ua = "";
-    next();
-  }
 
   function test_desktop_post(next) {
     _("Testing direct Resource POST.");
@@ -78,7 +69,6 @@ function test_resource_user_agent() {
   }
 
   Async.chain(
-    test_fetchInfo,
     test_desktop_post,
     test_desktop_get,
     test_mobile_get,

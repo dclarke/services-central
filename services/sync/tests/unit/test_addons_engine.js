@@ -6,9 +6,9 @@
 Cu.import("resource://gre/modules/AddonManager.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://services-sync/addonsreconciler.js");
-Cu.import("resource://services-sync/async.js");
+Cu.import("resource://services-common/async.js");
 Cu.import("resource://services-sync/engines/addons.js");
-Cu.import("resource://services-sync/ext/Preferences.js");
+Cu.import("resource://services-common/preferences.js");
 Cu.import("resource://services-sync/service.js");
 
 let prefs = new Preferences();
@@ -87,7 +87,7 @@ add_test(function test_get_changed_ids() {
 
   _("Ensure tracker changes are populated.");
   let now = new Date();
-  let changeTime = now.getTime() / 1000;
+  let changeTime = now.getTime();
   let guid1 = Utils.makeGUID();
   tracker.addChangedID(guid1, changeTime);
 

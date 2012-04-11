@@ -7,12 +7,12 @@ _("Test that node reassignment responses are respected on all kinds of " +
 // Don't sync any engines by default.
 Svc.DefaultPrefs.set("registerEngines", "")
 
+Cu.import("resource://services-common/rest.js");
 Cu.import("resource://services-sync/constants.js");
 Cu.import("resource://services-sync/policies.js");
-Cu.import("resource://services-sync/rest.js");
 Cu.import("resource://services-sync/service.js");
 Cu.import("resource://services-sync/status.js");
-Cu.import("resource://services-sync/log4moz.js");
+Cu.import("resource://services-common/log4moz.js");
 
 function run_test() {
   Log4Moz.repository.getLogger("Sync.AsyncResource").level = Log4Moz.Level.Trace;
@@ -79,7 +79,7 @@ function prepareServer() {
 
   do_check_eq(Service.userAPI, "http://localhost:8080/user/1.0/");
   let server = new SyncServer();
-  server.registerUser("johndoe");
+  server.registerUser("johndoe", "ilovejane");
   server.start();
   return server;
 }
@@ -225,7 +225,7 @@ add_test(function test_momentary_401_info_collections() {
                                 "weave:service:sync:error",
                                 undo,
                                 "weave:service:sync:finish",
-                                Service.infoURL);
+                                Service.baseURL + "info/collections");
 });
 
 add_test(function test_momentary_401_storage() {

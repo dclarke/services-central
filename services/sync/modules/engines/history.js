@@ -45,15 +45,15 @@ const Ci = Components.interfaces;
 const Cu = Components.utils;
 const Cr = Components.results;
 
-const HISTORY_TTL = 5184000; // 60 days
+const HISTORY_TTL = 60 * 24 * 60 * 60 * 1000; // 60 days
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://services-sync/constants.js");
 Cu.import("resource://services-sync/engines.js");
 Cu.import("resource://services-sync/record.js");
-Cu.import("resource://services-sync/async.js");
+Cu.import("resource://services-common/async.js");
 Cu.import("resource://services-sync/util.js");
-Cu.import("resource://services-sync/log4moz.js");
+Cu.import("resource://services-common/log4moz.js");
 
 function HistoryRec(collection, id) {
   CryptoWrapper.call(this, collection, id);
