@@ -56,8 +56,8 @@ add_test(function test_url_parsing() {
   run_next_test();
 });
 
-Cu.import("resource://services-sync/rest.js");
-function localRequest(path, user, password) {
+Cu.import("resource://services-common/rest.js");
+function localRequest(path) {
   _("localRequest: " + path);
   let url = "http://127.0.0.1:8080" + path;
   _("url: " + url);
