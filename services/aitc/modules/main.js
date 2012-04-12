@@ -113,7 +113,16 @@ AitcSvc.prototype = {
           } else {
             // If the user hasn't logged in yet, there is no point in checking
             // getEmailForAudience since it will definitely be empty.
-            BrowserID.getAssertionWithLogin(win, gotAssertion);
+            if (win.document && win.document.readyState == "complete") {
+              // This is the tabswitch case
+              BrowserID.getAssertionWithLogin(win, gotAssertion);
+            } else {
+              // This is the tabload case
+              win.addEventListener("load", function() {
+                win.removeEventListener("load", arguments.callee, false);
+                BrowserID.getAssertionWithLogin(win, gotAssertion);
+              }, false);
+            }
           }
         } else {
           dump("!!! AITC makeClient called but user not logged in!\n");
