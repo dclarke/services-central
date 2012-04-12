@@ -82,36 +82,50 @@ AitcSvc.prototype = {
   },
 
   // To start the AitcClient we need a token, for which we need a BrowserID assertion.
-  // Second callback 'login' is called if the user isn't logged in to BrowserID.
-  makeClient: function(cb, login) {
+  // If 'login' is true, makeClient will ask the user to login in the context of 'win'.
+  // If 'login' is true, 'win' must be provided (win is a XUL Window object).
+  makeClient: function(cb, login, win) {
     let self = this;
     if (self._client) {
       dump("!!! AITC client already exists, not creating!\n");
       return;
     }
 
+    function gotAssertion(err, val) {
+      if (err) {
+        dump("!!! AITC error from getAssertion: " + err + "\n");
+        cb(false);
+      } else {
+        self.getToken(val, function(token) {
+          self._client = new AitcClient(token);
+          cb(true);
+        });
+      }
+    }
+
     BrowserID.isLoggedIn(function(yes) {
       if (!yes) {
-        dump("!!! AITC makeClient called but user not logged in!\n");
-        if (login) login();
-        return;
-      }
-
-      // User is logged, obtain assertion for the same email that was used
-      // to login to MARKETPLACE, if possible.
-      BrowserID.getEmailForAudience(MARKETPLACE, function(email) {
-        BrowserID.getAssertion(email, MARKETPLACE, function(err, val) {
-          if (err) {
-            dump("!!! AITC error from getAssertion: " + err + "\n");
+        if (login) {
+          // User is not logged in, create popup asking for login
+          if (!win) {
+            dump("!!! AITC login is true but no window!\n");
             cb(false);
           } else {
-            self.getToken(val, function(token) {
-              self._client = new AitcClient(token);
-              cb(true);
-            });
+            // If the user hasn't logged in yet, there is no point in checking
+            // getEmailForAudience since it will definitely be empty.
+            BrowserID.getAssertionWithLogin(win, gotAssertion);
           }
+        } else {
+          dump("!!! AITC makeClient called but user not logged in!\n");
+          cb(false);
+        }
+      } else {
+        // User is logged in, obtain assertion for the same email that was used
+        // to login to MARKETPLACE, if possible.
+        BrowserID.getEmailForAudience(MARKETPLACE, function(email) {
+          BrowserID.getAssertion(email, DASHBOARD, gotAssertion);
         });
-      });
+      }
     });
   },
 
@@ -121,7 +135,7 @@ AitcSvc.prototype = {
     let self = this;
 
     // This is called iff the user is currently looking the dashboard
-    function dashboardLoaded() {
+    function dashboardLoaded(browser) {
       dump("!!! OMG DASHBOARD !!!\n");
       if (self._client) {
         self._client.runPeriodically();
@@ -129,9 +143,7 @@ AitcSvc.prototype = {
         self.makeClient(function(yes) {
           if (yes) self._client.runPeriodically();
           else dump("!!! AITC CLIENT NOT CREATED :( !!!\n");
-        }, function() {
-          // Create BrowserID login window
-        });
+        }, true, browser.contentWindow);
       }
     }
     // This is called when the user's attention is elsewhere
@@ -149,7 +161,7 @@ AitcSvc.prototype = {
         let win = Services.wm.getMostRecentWindow("navigator:browser");
         if (win.gBrowser.selectedBrowser == browser) {
           let uri = location.spec.substring(0, DASHBOARD.length);
-          if (uri == DASHBOARD) dashboardLoaded();
+          if (uri == DASHBOARD) dashboardLoaded(browser);
         }
       }
     };
@@ -157,7 +169,7 @@ AitcSvc.prototype = {
     function tabSelected(event) {
       let browser = event.target.linkedBrowser;
       let uri = browser.currentURI.spec.substring(0, DASHBOARD.length);
-      if (uri == DASHBOARD) dashboardLoaded();
+      if (uri == DASHBOARD) dashboardLoaded(browser);
       else dashboardUnloaded();
     }
 
@@ -185,7 +197,7 @@ AitcSvc.prototype = {
 
       // Also check the currently open URI
       let uri = browser.contentDocument.location.toString().substring(0, DASHBOARD.length);
-      if (uri == DASHBOARD) dashboardLoaded();
+      if (uri == DASHBOARD) dashboardLoaded(browser);
     }
 
     // Add listeners for app installs/uninstall
@@ -194,14 +206,23 @@ AitcSvc.prototype = {
   },
 
   observe: function(aSubject, aTopic, aData) {
+    let self = this;
+
     switch (aTopic) {
-    // TODO: Inform AitcClient about these events, or implement in client.js
     case "webapps-sync-install":
       dump("!!! AITC !!! app " + aData + " was installed\n");
-      if (this._client) this._client.remoteInstall(aData);
+      if (self._client) {
+        self._client.remoteInstall(aData);
+      } else {
+        // Don't force a login if the user isn't already
+        self.makeClient(function(yes) {
+          if (yes) self._client.remoteInstall(aData);
+        }, false);
+      }
       break;
     case "webapps-sync-uninstall":
       dump("!!! AITC !!! app " + aData + " was uninstalled\n");
+      //TODO: implement uninstall in client.js
       //if (this._client) this._client.remoteUninstall(aData);
       break;
     }

@@ -140,24 +140,44 @@ BrowserIDSvc.prototype = {
   	});
   },
 
+  // Get an assertion by asking the user to login in the context of win
+  getAssertionWithLogin: function(win, cb) {
+    let sandbox = new Cu.Sandbox(win, {
+      sandboxPrototype: win,
+      wantXrays: false
+    });
+    function callback(val) {
+      if (!val) {
+        cb("ERROR: Could not obtain assertion", null);
+      } else {
+        cb(null, val);
+      }
+    }
+    sandbox.importFunction(callback, "callback");
+
+    let scriptText = "navigator.id.get(function(val) { callback(val); });";
+    Cu.evalInSandbox(scriptText, sandbox, "1.8", ID_URI, 1);
+  },
+
   // Check if a user is logged in to browserid.org
   isLoggedIn: function _isLoggedIn(cb) {
   	let self = this;
   	this._getSandbox(function(sandbox) {
   		function callback(res) {
+        let list = [];
   			try {
-  				let list = JSON.parse(res);
-          let keys = Object.keys(list);
-          if (keys.length === 0) {
-            cb(false);
-          } else {
-            self._emails = keys;
-            cb(true);
-          }
-  			} catch (e) {
-          dump("!!! AITC Exception in isLoggedIn " + e + "\n");
-  				cb(false); return;
-  			}
+  				list = JSON.parse(res);
+        } catch (e) {
+          cb(false); return;
+        }
+
+        let keys = Object.keys(list);
+        if (keys.length === 0) {
+          cb(false);
+        } else {
+          self._emails = keys;
+          cb(true);
+        } 
   		}
   		sandbox.importFunction(callback, "callback");
   		let scriptText = 
