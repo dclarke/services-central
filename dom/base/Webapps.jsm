@@ -30,7 +30,6 @@ XPCOMUtils.defineLazyGetter(this, "ppmm", function() {
 let DOMApplicationRegistry = {
   appsFile: null,
   webapps: { },
-  confirmRemoteInstall: null,
 
   init: function() {
     this.messages = ["Webapps:Install", "Webapps:Uninstall",
@@ -182,27 +181,19 @@ let DOMApplicationRegistry = {
     let appObject = this._cloneAppObject(app);
     appObject.installTime = (new Date()).getTime();
 
-    let continueInstall = (function () {
-      let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", id], true, true);
+    let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", id], true, true);
+    let manFile = dir.clone();
+    manFile.append("manifest.json");
+    this._writeFile(manFile, JSON.stringify(appObject.manifest));
 
-      let manFile = dir.clone();
-      manFile.append("manifest.json");
-      this._writeFile(manFile, JSON.stringify(appObject.manifest));
-      delete appObject.manifest;
-      this.webapps[id] = appObject;
-      if (!aFromSync)
-        this._saveApps((function() {
-          ppmm.sendAsyncMessage("Webapps:Install:Return:OK", aData);
-          Services.obs.notifyObservers(this, "webapps-sync-install", id);
-        }).bind(this));
-    }).bind(this);
-
-    dump("!!! Trying to install, with remoteInstall: " + this.confirmRemoteInstall + "\n");
-    if (this.confirmRemoteInstall) {
-      this.confirmRemoteInstall(app, continueInstall);
-    } else {
-      continueInstall();
-    }
+    delete appObject.manifest;
+    this.webapps[id] = appObject;
+    
+    if (!aFromSync)
+      this._saveApps((function() {
+        ppmm.sendAsyncMessage("Webapps:Install:Return:OK", aData);
+        Services.obs.notifyObservers(this, "webapps-sync-install", id);
+      }).bind(this));
   },
 
   _appId: function(aURI) {

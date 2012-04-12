@@ -79,11 +79,11 @@ function AitcClient(token, registry) {
   dump('!!! AITC !!! token endpoint: ' + this.uri + '\n');
   this.token = token;
   this.registry = registry || DOMApplicationRegistry;
+
   // FIXME: should this be handled by the caller?
   this.appsLastModified = null;
   this.devicesLastModified = null;
-  this.registry.confirmRemoteInstall = this.remoteInstall.bind(this);
-  dump('!!! AITC !!! initialized client: ' + registry + '\n');
+  dump('!!! AITC !!! initialized client\n');
 }
 
 AitcClient.prototype = {
@@ -430,7 +430,7 @@ AitcClient.prototype = {
     this.timer.initWithCallback(event, 10000, Ci.nsITimer.TYPE_REPEATING_SLACK);
   },
 
-  remoteInstall: function (app, callback) {
+  remoteInstall: function (app) {
     dump("!!! AITC !!! putting app: " + app.origin + "\n");
     // We need to sanitize the app record a bit to match what the server expects
     // manifestURL -> manifestPath (this could probalby be changed in registry)
@@ -447,11 +447,6 @@ AitcClient.prototype = {
     if ('modifiedAt' in app)
       record.modifiedAt = app.modifiedAt;
 
-    this.putApp(record, null, function (error) {
-      if (! error) {
-        callback();
-      }
-    });
+    this.putApp(record, null, function (error) {});
   }
-
 };

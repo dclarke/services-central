@@ -47,6 +47,7 @@ Cu.import("resource://gre/modules/Webapps.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 
 Cu.import("resource://services-sync/util.js");
+Cu.import("resource://services-aitc/client.js");
 Cu.import("resource://services-aitc/browserid.js");
 Cu.import("resource://services-common/tokenserverclient.js");
 
@@ -147,7 +148,6 @@ AitcSvc.prototype = {
     Svc.Obs.add("webapps-sync-uninstall", this);
 
     // Until we have a working dashboard, run client every 30 seconds
-    Cu.import("resource://services-aitc/client.js");
     this._client = new AitcClient(this._token);
     this._client.runPeriodically();
   },
