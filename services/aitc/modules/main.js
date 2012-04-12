@@ -83,7 +83,62 @@ AitcSvc.prototype = {
   // The goal of the init function is to be ready to activate the AITC
   // client whenever the user is looking at the dashboard
   init: function() {
+    // This is called iff the user is currently looking the dashboard
+    function dashboardLoaded() {
+      dump("!!! OMG DASHBOARD !!!\n");
+    }
+    // This is called when the user's attention is elsewhere
+    function dashboardUnloaded() {
+      dump("!!! OMG no more dashboard !!!\n");
+    }
 
+    // Called when a URI is loaded in any tab. We have to listen for this
+    // because tabSelected is not called if I open a new tab which loads
+    // about:home and then navigate to the dashboard, or navigation via
+    // links on the currently open tab
+    let listener = {
+      onLocationChange: function(browser, progress, req, location, flags) {
+        let win = Services.wm.getMostRecentWindow("navigator:browser");
+        if (win.gBrowser.selectedBrowser == browser) {
+          let uri = location.spec.substring(0, DASHBOARD.length);
+          if (uri == DASHBOARD) dashboardLoaded();
+        }
+      }
+    };
+    // Called when the current tab selection changes
+    function tabSelected(event) {
+      let browser = event.target.linkedBrowser;
+      let uri = browser.currentURI.spec.substring(0, DASHBOARD.length);
+      if (uri == DASHBOARD) dashboardLoaded();
+      else dashboardUnloaded();
+    }
+
+    // Add listeners for all windows opened in the future
+    function winWatcher(subject, topic) {
+      if (topic != "domwindowopened") return;
+      subject.addEventListener("load", function() {
+        subject.removeEventListener("load", arguments.callee, false);
+        let doc = subject.document.documentElement;
+        if (doc.getAttribute("windowtype") == "navigator:browser") {
+          let browser = subject.gBrowser;
+          browser.addTabsProgressListener(listener);
+          browser.tabContainer.addEventListener("TabSelect", tabSelected);
+        }
+      }, false);
+    }
+    Services.ww.registerNotification(winWatcher);
+
+    // Add listeners for all current open windows
+    let enumerator = Services.wm.getEnumerator("navigator:browser");
+    while (enumerator.hasMoreElements()) {
+      let browser = enumerator.getNext().gBrowser;
+      browser.addTabsProgressListener(listener);
+      browser.tabContainer.addEventListener("TabSelect", tabSelected);
+
+      // Also check the currently open URI
+      let uri = browser.contentDocument.location.toString().substring(0, DASHBOARD.length);
+      if (uri == DASHBOARD) dashboardLoaded();
+    }
   },
 
   ready: function(token) {
