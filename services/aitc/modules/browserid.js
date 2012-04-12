@@ -44,42 +44,42 @@ function BrowserIDSvc() {
 	this._frame = null;
 	this._container = null;
 	this._emails = [];
-
-	// Make channel for URI
-  let iOservice = Cc["@mozilla.org/network/io-service;1"]
-  	.getService(Ci.nsIIOService);
-  this._channel = iOservice.newChannel(ID_URI, null, null);
 }
 BrowserIDSvc.prototype = {
 	_getSandbox: function(cb) {
-    if (!this._frame) {
-    	/*
-    	let appShell = Cc["@mozilla.org/appshell/appShellService;1"]
-      	.getService(Ci.nsIAppShellService);
-    	let hiddenDOMWindow = appShell.hiddenDOMWindow;
-    	let doc = hiddenDOMWindow.document;
-    	*/
-    	// This way of obtaining a window is more fickle than the commented way
-    	// but appShellService doesn't work sometimes. Investigate.
-    	let wM = Cc["@mozilla.org/appshell/window-mediator;1"]
-      	.getService(Ci.nsIWindowMediator);
-    	let win = wM.getMostRecentWindow("navigator:browser");
-    	let doc = win.document;
-
-    	// Insert iframe in to create docshell
-    	let frame = doc.createElement("iframe");
-    	frame.setAttribute("type", "content");
-    	frame.setAttribute("collapsed", "true");
-    	doc.documentElement.appendChild(frame);
-
-    	// Set instance properties for reuse
-    	this._frame = frame;
-    	this._container = doc.documentElement;
-
-    	// Stop about:blank from being loaded
-    	let webNav = frame.docShell.QueryInterface(Ci.nsIWebNavigation);
-    	webNav.stop(Ci.nsIWebNavigation.STOP_NETWORK);
+    if (this._frame) {
+      // TODO: Figure out how we can reuse the same iframe
+      // Recreate each time, for now.
+      this._container.removeChild(this._frame);
+      this._frame = null;
     }
+
+  	/*
+  	let appShell = Cc["@mozilla.org/appshell/appShellService;1"]
+    	.getService(Ci.nsIAppShellService);
+  	let hiddenDOMWindow = appShell.hiddenDOMWindow;
+  	let doc = hiddenDOMWindow.document;
+  	*/
+  	// This way of obtaining a window is more fickle than the commented way
+  	// but appShellService doesn't work sometimes. Investigate.
+  	let wM = Cc["@mozilla.org/appshell/window-mediator;1"]
+    	.getService(Ci.nsIWindowMediator);
+  	let win = wM.getMostRecentWindow("navigator:browser");
+  	let doc = win.document;
+
+  	// Insert iframe in to create docshell
+  	let frame = doc.createElement("iframe");
+  	frame.setAttribute("type", "content");
+  	frame.setAttribute("collapsed", "true");
+  	doc.documentElement.appendChild(frame);
+
+  	// Set instance properties for reuse
+  	this._frame = frame;
+  	this._container = doc.documentElement;
+
+  	// Stop about:blank from being loaded
+  	let webNav = frame.docShell.QueryInterface(Ci.nsIWebNavigation);
+  	webNav.stop(Ci.nsIWebNavigation.STOP_NETWORK);
 
     let self = this;
 		let parseHandler = {
@@ -94,14 +94,35 @@ BrowserIDSvc.prototype = {
       }
     };
 
+    // Make channel
+    let iOservice = Cc["@mozilla.org/network/io-service;1"]
+      .getService(Ci.nsIIOService);
+    let channel = iOservice.newChannel(ID_URI, null, null);
+
     // Load the iframe
     this._frame.addEventListener("DOMContentLoaded", parseHandler, true);
     let uriLoader = Cc["@mozilla.org/uriloader;1"].getService(Ci.nsIURILoader);
-    uriLoader.openURI(this._channel, true, this._frame.docShell);
+    uriLoader.openURI(channel, true, this._frame.docShell);
 	},
 
 	// Obtain a BrowserID assertion (if user is already logged in)
   getAssertion: function(email, audience, cb) {
+    let address = email;
+    if (!address) {
+      if (!this._emails.length === 0) {
+        dump("!!! AITC error: getAssertion called when user is not loggedIn\n");
+        cb("ERROR: Not logged in", null);
+        return;
+      } else {
+        // Just pick the first one in the list
+        address = this._emails[0];
+      }
+    }
+    if (!audience) {
+      cb("ERROR: audience not provided", null);
+      return;
+    }
+
   	this._getSandbox(function(sandbox) {
   		function successCb(res) {
 				cb(null, res);
@@ -113,7 +134,7 @@ BrowserIDSvc.prototype = {
 			sandbox.importFunction(errorCb, "errorCb");
 
 			let scriptText = 
-				"window.BrowserID.User.getAssertion('" + email + "', '" + audience +
+				"window.BrowserID.User.getAssertion('" + address + "', '" + audience +
 				"', successCb, errorCb);";
 			Cu.evalInSandbox(scriptText, sandbox, "1.8", ID_URI, 1);
   	});
@@ -126,16 +147,16 @@ BrowserIDSvc.prototype = {
   		function callback(res) {
   			try {
   				let list = JSON.parse(res);
+          let keys = Object.keys(list);
+          if (keys.length === 0) {
+            cb(false);
+          } else {
+            self._emails = keys;
+            cb(true);
+          }
   			} catch (e) {
+          dump("!!! AITC Exception in isLoggedIn " + e + "\n");
   				cb(false); return;
-  			}
-
-  			let keys = Object.keys(list);
-  			if (keys.length === 0) {
-  				cb(false);
-  			} else {
-  				self._emails = keys;
-  				cb(true);
   			}
   		}
   		sandbox.importFunction(callback, "callback");

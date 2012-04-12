@@ -81,16 +81,63 @@ AitcSvc.prototype = {
     });
   },
 
+  // To start the AitcClient we need a token, for which we need a BrowserID assertion.
+  // Second callback 'login' is called if the user isn't logged in to BrowserID.
+  makeClient: function(cb, login) {
+    let self = this;
+    if (self._client) {
+      dump("!!! AITC client already exists, not creating!\n");
+      return;
+    }
+
+    BrowserID.isLoggedIn(function(yes) {
+      if (!yes) {
+        dump("!!! AITC makeClient called but user not logged in!\n");
+        if (login) login();
+        return;
+      }
+
+      // User is logged, obtain assertion for the same email that was used
+      // to login to MARKETPLACE, if possible.
+      BrowserID.getEmailForAudience(MARKETPLACE, function(email) {
+        BrowserID.getAssertion(email, MARKETPLACE, function(err, val) {
+          if (err) {
+            dump("!!! AITC error from getAssertion: " + err + "\n");
+            cb(false);
+          } else {
+            self.getToken(val, function(token) {
+              self._client = new AitcClient(token);
+              cb(true);
+            });
+          }
+        });
+      });
+    });
+  },
+
   // The goal of the init function is to be ready to activate the AITC
   // client whenever the user is looking at the dashboard
   init: function() {
+    let self = this;
+
     // This is called iff the user is currently looking the dashboard
     function dashboardLoaded() {
       dump("!!! OMG DASHBOARD !!!\n");
+      if (self._client) {
+        self._client.runPeriodically();
+      } else {
+        self.makeClient(function(yes) {
+          if (yes) self._client.runPeriodically();
+          else dump("!!! AITC CLIENT NOT CREATED :( !!!\n");
+        }, function() {
+          // Create BrowserID login window
+        });
+      }
     }
     // This is called when the user's attention is elsewhere
     function dashboardUnloaded() {
       dump("!!! OMG no more dashboard !!!\n");
+      if (self._client) self._client.stop();
     }
 
     // Called when a URI is loaded in any tab. We have to listen for this
@@ -140,16 +187,10 @@ AitcSvc.prototype = {
       let uri = browser.contentDocument.location.toString().substring(0, DASHBOARD.length);
       if (uri == DASHBOARD) dashboardLoaded();
     }
-  },
 
-  ready: function(token) {
-    this._token = token;
+    // Add listeners for app installs/uninstall
     Svc.Obs.add("webapps-sync-install", this);
     Svc.Obs.add("webapps-sync-uninstall", this);
-
-    // Until we have a working dashboard, run client every 30 seconds
-    this._client = new AitcClient(this._token);
-    this._client.runPeriodically();
   },
 
   observe: function(aSubject, aTopic, aData) {
@@ -157,9 +198,11 @@ AitcSvc.prototype = {
     // TODO: Inform AitcClient about these events, or implement in client.js
     case "webapps-sync-install":
       dump("!!! AITC !!! app " + aData + " was installed\n");
+      if (this._client) this._client.remoteInstall(aData);
       break;
     case "webapps-sync-uninstall":
       dump("!!! AITC !!! app " + aData + " was uninstalled\n");
+      //if (this._client) this._client.remoteUninstall(aData);
       break;
     }
   }

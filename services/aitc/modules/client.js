@@ -37,6 +37,8 @@
 
 "use strict";
 
+const FREQ = 10000;
+const EXPORTED_SYMBOLS = ['AitcClient'];
 const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 Cu.import("resource://services-sync/util.js");
@@ -44,20 +46,15 @@ Cu.import("resource://services-common/rest.js");
 Cu.import("resource://services-common/log4moz.js");
 Cu.import("resource://gre/modules/Webapps.jsm");
 
-const EXPORTED_SYMBOLS = [
-  'AitcClient'
-];
-
 function AuthRESTRequest(uri, authToken) {
   RESTRequest.call(this, uri);
   this.authToken = authToken;
   this._log.level = 30;
   this._log.appenders.push(new Log4Moz.DumpAppender());
 }
-
 AuthRESTRequest.prototype = {
   __proto__: RESTRequest.prototype,
-  dispatch: function dispatch(method, data, onComplete, onProgress) {
+  dispatch: function(method, data, onComplete, onProgress) {
     let sig = Utils.computeHTTPMACSHA1(
       this.authToken.id,
       this.authToken.key,
@@ -85,11 +82,11 @@ function AitcClient(token, registry) {
   this.devicesLastModified = null;
   dump('!!! AITC !!! initialized client\n');
 }
-
 AitcClient.prototype = {
   _log: null,
+  _timer: null,
 
-  _makeRequest: function _makeRequest(uri) {
+  _makeRequest: function(uri) {
     if (typeof uri != 'string') {
       throw 'Bad request URI: ' + uri;
     }
@@ -102,7 +99,7 @@ AitcClient.prototype = {
     }
   },
 
-  getApps: function getApps(cb) {
+  getApps: function(cb) {
     let self = this;
     let req = this._makeRequest(this.uri + '/apps/?full=1');
     if (this.appsLastModified) {
@@ -128,7 +125,7 @@ AitcClient.prototype = {
     });
   },
 
-  getAppDetails: function getDetails(since, cb) {
+  getAppDetails: function(since, cb) {
     let self = this;
     let uri = this.uri + '/apps/?full=1';
     if (since) {
@@ -149,12 +146,12 @@ AitcClient.prototype = {
     });
   },
 
-  _makeAppURI: function _makeAppURI(origin) {
+  _makeAppURI: function(origin) {
     let part = btoa(Utils._sha1(origin)).replace(/\+/, '-').replace(/\//, '_').replace(/=/, '');
     return this.uri + '/apps/' + part;
   },
 
-  putApp: function putApp(appRec, appLastModified, cb) {
+  putApp: function(appRec, appLastModified, cb) {
     let self = this;
     let uri = this._makeAppURI(appRec.origin);
     let req = this._makeRequest(uri);
@@ -185,7 +182,7 @@ AitcClient.prototype = {
     });
   },
 
-  deleteApp: function deleteApp(origin, appLastModified, cb) {
+  deleteApp: function(origin, appLastModified, cb) {
     let self = this;
     let uri = this._makeAppURI(origin);
     let req = this._makeRequest(uri);
@@ -206,18 +203,18 @@ AitcClient.prototype = {
     });
   },
 
-  _validUUID: function _validUUID(uuid) {
+  _validUUID: function(uuid) {
     return uuid.search(/^[a-zA-Z0-9_-]+$/) == 0;
   },
 
-  _makeDeviceURI: function _makeDeviceURI(deviceUUID) {
+  _makeDeviceURI: function(deviceUUID) {
     if (! this._validUUID(deviceUUID)) {
       throw 'Not a valid UUID: ' + deviceUUID;
     }
     return this.uri + '/devices/' + deviceUUID;
   },
 
-  getDevices: function getDevices(cb) {
+  getDevices: function(cb) {
     let self = this;
     let req = this._makeRequest(this.uri + '/devices/');
     if (this.devicesLastModified) {
@@ -237,7 +234,7 @@ AitcClient.prototype = {
     });
   },
 
-  putDevice: function (data, lastModified, cb) {
+  putDevice: function(data, lastModified, cb) {
     let self = this;
     let req = this._makeRequest(this._makeDeviceURI(data.uuid));
     if (lastModified) {
@@ -257,13 +254,13 @@ AitcClient.prototype = {
     });
   },
 
-  deleteDevice: function (uuid, lastModified, cb) {
+  deleteDevice: function(uuid, lastModified, cb) {
     let self = this;
     let req = this._makeRequest(this._makeDeviceURI(uuid));
     if (lastModified) {
       req.setHeader('X-If-Unmodified-Since', lastModified);
     }
-    req.delete(function (error) {
+    req.delete(function(error) {
       if (error) {
         self.error(error);
         cb(error);
@@ -277,7 +274,7 @@ AitcClient.prototype = {
     });
   },
 
-  deleteCollection: function (cb) {
+  deleteCollection: function(cb) {
     let self = this;
     let req = this._makeRequest(this.uri);
     req.delete(function (error) {
@@ -290,7 +287,7 @@ AitcClient.prototype = {
     });
   },
 
-  processResponse: function processResponse(resp, callback) {
+  processResponse: function(resp, callback) {
     let self = this;
     let allApps = DOMApplicationRegistry.getAllWithoutManifests(function (apps) {
       let existingByOrigin = {};
@@ -405,7 +402,7 @@ AitcClient.prototype = {
     });
   },
 
-  checkServer: function checkServer() {
+  checkServer: function() {
     let self = this;
     dump('!!! AITC !!! Starting server check\n');
     this.getApps(function (error, apps) {
@@ -418,19 +415,28 @@ AitcClient.prototype = {
     });
   },
 
-  runPeriodically: function runPeriodically() {
+  runPeriodically: function() {
     let self = this;
-    this.timer = Cc["@mozilla.org/timer;1"]
-      .createInstance(Ci.nsITimer);
+    if (this._timer) return;
+
+    // Do one check right now, and then once every FREQ seconds
+    self.checkServer();
+    this._timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
     let event = {
       notify: function (timer) {
         self.checkServer();
       }
     };
-    this.timer.initWithCallback(event, 10000, Ci.nsITimer.TYPE_REPEATING_SLACK);
+    this._timer.initWithCallback(event, FREQ, Ci.nsITimer.TYPE_REPEATING_SLACK);
   },
 
-  remoteInstall: function (app) {
+  stop: function() {
+    if (!this._timer) return;
+    this._timer.cancel();
+    this._timer = null;
+  },
+
+  remoteInstall: function(app) {
     dump("!!! AITC !!! putting app: " + app.origin + "\n");
     // We need to sanitize the app record a bit to match what the server expects
     // manifestURL -> manifestPath (this could probalby be changed in registry)
