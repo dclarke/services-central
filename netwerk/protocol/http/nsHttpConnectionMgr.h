@@ -55,7 +55,7 @@
 #include "nsITimer.h"
 #include "nsIX509Cert3.h"
 
-#include "nsHttpPipeline.h"
+class nsHttpPipeline;
 
 //-----------------------------------------------------------------------------
 
@@ -104,6 +104,10 @@ public:
     // Stops timer scheduled for next pruning of dead connections if
     // there are no more idle connections or active spdy ones
     void ConditionallyStopPruneDeadConnectionsTimer();
+
+    // Stops timer used for the read timeout tick if there are no currently
+    // active connections.
+    void ConditionallyStopReadTimeoutTick();
 
     // adds a transaction to the list of managed transactions.
     nsresult AddTransaction(nsHttpTransaction *, PRInt32 priority);

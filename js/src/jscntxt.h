@@ -567,16 +567,6 @@ struct JSRuntime : js::RuntimeFriendFields
     const char          *numGrouping;
 
     /*
-     * Weak references to lazily-created, well-known XML singletons.
-     *
-     * NB: Singleton objects must be carefully disconnected from the rest of
-     * the object graph usually associated with a JSContext's global object,
-     * including the set of standard class objects.  See jsxml.c for details.
-     */
-    JSObject            *anynameObject;
-    JSObject            *functionNamespaceObject;
-
-    /*
      * Flag indicating that we are waiving any soft limits on the GC heap
      * because we want allocations to be infallible (except when we hit OOM).
      */
@@ -1546,15 +1536,6 @@ extern JSErrorFormatString js_ErrorFormatString[JSErr_Limit];
 #endif
 
 /*
- * If the operation callback flag was set, call the operation callback.
- * This macro can run the full GC. Return true if it is OK to continue and
- * false otherwise.
- */
-#define JS_CHECK_OPERATION_LIMIT(cx)                                          \
-    (JS_ASSERT_REQUEST_DEPTH(cx),                                             \
-     (!cx->runtime->interrupt || js_InvokeOperationCallback(cx)))
-
-/*
  * Invoke the operation callback and return false if the current execution
  * is to be terminated.
  */
@@ -1569,6 +1550,18 @@ js_GetCurrentBytecodePC(JSContext* cx);
 
 extern JSScript *
 js_GetCurrentScript(JSContext* cx);
+
+/*
+ * If the operation callback flag was set, call the operation callback.
+ * This macro can run the full GC. Return true if it is OK to continue and
+ * false otherwise.
+ */
+static MOZ_ALWAYS_INLINE bool
+JS_CHECK_OPERATION_LIMIT(JSContext *cx)
+{
+    JS_ASSERT_REQUEST_DEPTH(cx);
+    return !cx->runtime->interrupt || js_InvokeOperationCallback(cx);
+}
 
 namespace js {
 

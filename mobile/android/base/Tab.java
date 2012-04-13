@@ -56,6 +56,7 @@ import org.mozilla.gecko.gfx.Layer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 
 public final class Tab {
@@ -125,7 +126,7 @@ public final class Tab {
         mContentType = "";
         mPluginViews = new ArrayList<View>();
         mPluginLayers = new HashMap<Surface, Layer>();
-        mState = STATE_LOADING;
+        setState(STATE_LOADING);
         mContentResolver = Tabs.getInstance().getContentResolver();
         mContentObserver = new ContentObserver(GeckoAppShell.getHandler()) {
             public void onChange(boolean selfChange) {
@@ -324,7 +325,11 @@ public final class Tab {
     }
 
     public void setState(int state) {
-        mState = state;
+        // Pages implemented in Java are not bound by Gecko state
+        if ("about:home".equals(mUrl))
+            mState = STATE_SUCCESS;
+        else
+            mState = state;
     }
 
     public int getState() {
@@ -452,10 +457,17 @@ public final class Tab {
     }
 
     public void removeTransientDoorHangers() {
+        // Make a temporary set to avoid a ConcurrentModificationException
+        final HashSet<String> valuesToRemove = new HashSet<String>(); 
+
         for (String value : mDoorHangers.keySet()) {
             DoorHanger dh = mDoorHangers.get(value);
             if (dh.shouldRemove())
-                mDoorHangers.remove(value);
+                valuesToRemove.add(value);
+        }
+
+        for (String value : valuesToRemove) {
+            mDoorHangers.remove(value);
         }
     }
 

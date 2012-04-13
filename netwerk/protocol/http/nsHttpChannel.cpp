@@ -1149,6 +1149,11 @@ nsHttpChannel::ProcessResponse()
 nsresult
 nsHttpChannel::ContinueProcessResponse(nsresult rv)
 {
+    if (rv == NS_ERROR_CORRUPTED_CONTENT) {
+        // don't ever render responses we've flagged as suspect content
+        return NS_ERROR_CORRUPTED_CONTENT;
+    }
+
     if (rv == NS_ERROR_DOM_BAD_URI && mRedirectURI) {
 
         bool isHTTP = false;
@@ -1986,17 +1991,20 @@ nsHttpChannel::ProcessNotModified()
     // that cache entry so there is a fighting chance of getting things on the
     // right track as well as disabling pipelining for that host.
 
-    nsCAutoString lastModified;
+    nsCAutoString lastModifiedCached;
     nsCAutoString lastModified304;
 
     rv = mCachedResponseHead->GetHeader(nsHttp::Last_Modified,
-                                        lastModified);
-    if (NS_SUCCEEDED(rv))
+                                        lastModifiedCached);
+    if (NS_SUCCEEDED(rv)) {
         rv = mResponseHead->GetHeader(nsHttp::Last_Modified, 
                                       lastModified304);
-    if (NS_SUCCEEDED(rv) && !lastModified304.Equals(lastModified)) {
+    }
+
+    if (NS_SUCCEEDED(rv) && !lastModified304.Equals(lastModifiedCached)) {
         LOG(("Cache Entry and 304 Last-Modified Headers Do Not Match "
-             "%s and %s\n", lastModified.get(), lastModified304.get()));
+             "[%s] and [%s]\n",
+             lastModifiedCached.get(), lastModified304.get()));
 
         mCacheEntry->Doom();
         if (mConnectionInfo)
@@ -2004,6 +2012,7 @@ nsHttpChannel::ProcessNotModified()
                 PipelineFeedbackInfo(mConnectionInfo,
                                      nsHttpConnectionMgr::RedCorruptedContent,
                                      nsnull, 0);
+        Telemetry::Accumulate(Telemetry::CACHE_LM_INCONSISTENT, true);
     }
 
     // merge any new headers with the cached response headers
@@ -2370,11 +2379,13 @@ nsHttpChannel::OpenNormalCacheEntry()
     nsCOMPtr<nsICacheSession> session;
     rv = gHttpHandler->GetCacheSession(storagePolicy,
                                        getter_AddRefs(session));
-    if (NS_FAILED(rv)) return rv;
+    if (NS_FAILED(rv))
+        return rv;
 
-    nsCacheAccessMode accessRequested;
+    nsCacheAccessMode accessRequested = 0;
     rv = DetermineCacheAccess(&accessRequested);
-    if (NS_FAILED(rv)) return rv;
+    if (NS_FAILED(rv))
+        return rv;
 
     mOnCacheEntryAvailableCallback =
         &nsHttpChannel::OnNormalCacheEntryAvailable;
@@ -3522,7 +3533,11 @@ nsHttpChannel::AsyncProcessRedirection(PRUint32 redirectType)
 
     nsresult rv = CreateNewURI(location, getter_AddRefs(mRedirectURI));
 
-    if (NS_FAILED(rv)) return rv;
+    if (NS_FAILED(rv)) {
+        LOG(("Invalid URI for redirect: Location: %s\n", location));
+        Cancel(NS_ERROR_CORRUPTED_CONTENT);
+        return NS_ERROR_CORRUPTED_CONTENT;
+    }
 
     if (mApplicationCache) {
         // if we are redirected to a different origin check if there is a fallback
