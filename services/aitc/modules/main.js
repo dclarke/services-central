@@ -220,19 +220,23 @@ AitcSvc.prototype = {
     switch (aTopic) {
     case "webapps-sync-install":
       dump("!!! AITC !!! app " + aData + " was installed\n");
+      let app = DOMApplicationRegistry.getAppById(aData);
+      if (!app)
+        break;
+
       if (self._client) {
-        self._client.remoteInstall(aData);
+        self._client.remoteInstall(app);
       } else {
         // Don't force a login if the user isn't already
         self.makeClient(function(yes) {
-          if (yes) self._client.remoteInstall(aData);
+          if (yes) self._client.remoteInstall(app);
         }, false);
       }
       break;
     case "webapps-sync-uninstall":
       dump("!!! AITC !!! app " + aData + " was uninstalled\n");
-      //TODO: implement uninstall in client.js
-      //if (this._client) this._client.remoteUninstall(aData);
+      // TODO: implement uninstall in client.js
+      // if (this._client) this._client.remoteUninstall(aData);
       break;
     }
   }

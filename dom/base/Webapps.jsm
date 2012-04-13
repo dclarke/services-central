@@ -173,8 +173,7 @@ let DOMApplicationRegistry = {
         dir.remove(true);
       } catch(e) {
       }
-    }
-    else {
+    } else {
       id = this.makeAppId();
     }
 
@@ -184,11 +183,9 @@ let DOMApplicationRegistry = {
     let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", id], true, true);
     let manFile = dir.clone();
     manFile.append("manifest.json");
-    this._writeFile(manFile, JSON.stringify(appObject.manifest));
-
-    delete appObject.manifest;
+    this._writeFile(manFile, JSON.stringify(app.manifest));
     this.webapps[id] = appObject;
-    
+
     if (!aFromSync)
       this._saveApps((function() {
         ppmm.sendAsyncMessage("Webapps:Install:Return:OK", aData);
@@ -313,15 +310,6 @@ let DOMApplicationRegistry = {
     }).bind(this));
   },
 
-  getAllWithoutManifests: function(aCallback) {
-    let result = {};
-    for (let id in this.webapps) {
-      let app = this._cloneAppObject(this.webapps[id]);
-      result[id] = app;
-    }
-    aCallback(result);
-  },
-
   getManifestFor: function(aOrigin, aCallback) {
     if (!aCallback)
       return;
@@ -337,18 +325,22 @@ let DOMApplicationRegistry = {
     });
   },
 
-  /** added to support the sync engine */
-
+  /** Added to support apps in the cloud */
   getAppById: function(aId) {
     if (!this.webapps[aId])
       return null;
-
+    
     let app = this._cloneAppObject(this.webapps[aId]);
     return app;
   },
-
-  itemExists: function(aId) {
-    return !!this.webapps[aId];
+  
+  getAllWithoutManifests: function(aCallback) {
+    let result = {};
+    for (let id in this.webapps) {
+      let app = this._cloneAppObject(this.webapps[id]);
+      result[id] = app;
+    }
+    aCallback(result);
   },
 
   updateApps: function(aRecords, aCallback) {
@@ -366,11 +358,9 @@ let DOMApplicationRegistry = {
         }
         ppmm.sendAsyncMessage("Webapps:Uninstall:Return:OK", { origin: origin });
       } else {
-        if (!!this.webapps[record.id]) {
+        if (this.webapps[record.id]) {
           this.webapps[record.id] = record.value;
-          delete this.webapps[record.id].manifest;
-        }
-        else {
+        } else {
           let data = { app: record.value };
           this.confirmInstall(data, true);
           ppmm.sendAsyncMessage("Webapps:Install:Return:OK", data);
@@ -378,33 +368,7 @@ let DOMApplicationRegistry = {
       }
     }
     this._saveApps(aCallback);
-  },
-
-  /*
-   * May be removed once sync API change
-   */
-  getAllIDs: function() {
-    let apps = {};
-    for (let id in this.webapps) {
-      // only sync http and https apps
-      if (this.webapps[id].origin.indexOf("http") == 0)
-        apps[id] = true;
-    }
-    return apps;
-  },
-
-  wipe: function(aCallback) {
-    let ids = this.getAllIDs();
-    for (let id in ids) {
-      delete this.webapps[id];
-      let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", id], true, true);
-      try {
-        dir.remove(true);
-      } catch (e) {
-      }
-    }
-    this._saveApps(aCallback);
-   }
+  }
 };
 
 /**
